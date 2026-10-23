@@ -1,2 +1,5 @@
 python-dotenv
 pyyaml
+boto3
+pandas
+pyarrow
