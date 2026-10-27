@@ -11,6 +11,18 @@ from config import ROOT, get_r2_settings
 CACHE_DIR = ROOT / "cache"
 
 
+def _check_read(key_or_prefix, grader=False):
+    """Agent chi duoc DOC input/ va output/. answers/ chi danh cho buoc cham diem (grader=True)."""
+    if grader:
+        return
+    s = get_r2_settings()
+    allowed = (s["R2_INPUT_PREFIX"], s["R2_OUTPUT_PREFIX"])
+    if ".." in Path(key_or_prefix).parts or not key_or_prefix.startswith(allowed):
+        raise ValueError(
+            f"Không được đọc '{key_or_prefix}'. Chỉ được đọc trong {allowed}."
+        )
+
+
 def _make_client(key_id, secret):
     s = get_r2_settings()
     return boto3.client(
@@ -35,8 +47,9 @@ def _write_client():
     return _make_client(s["R2_WRITE_ACCESS_KEY_ID"], s["R2_WRITE_SECRET_ACCESS_KEY"])
 
 
-def list_objects(prefix=""):
+def list_objects(prefix="", grader=False):
     """Liet ke file tren R2 (co phan trang). Tra ve list dict."""
+    _check_read(prefix, grader)
     bucket = get_r2_settings()["R2_BUCKET"]
     client = _read_client()
     paginator = client.get_paginator("list_objects_v2")
@@ -54,8 +67,9 @@ def list_objects(prefix=""):
     return result
 
 
-def download_with_cache(key, cache_dir=None):
+def download_with_cache(key, cache_dir=None, grader=False):
     """Tai file ve cache/. Chi tai lai khi etag tren R2 da doi. Tra ve Path."""
+    _check_read(key, grader)
     if ".." in Path(key).parts:
         raise ValueError(f"Đường dẫn không hợp lệ: {key}")
     bucket = get_r2_settings()["R2_BUCKET"]
@@ -95,9 +109,9 @@ def upload_file(local_path, key):
     return key
 
 
-def read_table(key):
+def read_table(key, grader=False):
     """Tai (co cache) roi doc thanh dataframe."""
-    path = download_with_cache(key)
+    path = download_with_cache(key, grader=grader)
     if str(path).lower().endswith(".parquet"):
         return pd.read_parquet(path)
     return pd.read_csv(path)
@@ -112,16 +126,17 @@ def _fmt_size(n):
 
 
 if __name__ == "__main__":
-    args = sys.argv[1:]
+    grader = "--grader" in sys.argv[1:]
+    args = [a for a in sys.argv[1:] if a != "--grader"]
     if args and args[0] == "list":
-        prefix = args[1] if len(args) > 1 else ""
-        for o in list_objects(prefix):
+        prefix = args[1] if len(args) > 1 else get_r2_settings()["R2_INPUT_PREFIX"]
+        for o in list_objects(prefix, grader=grader):
             print(f"{o['key']}  ({_fmt_size(o['size'])})")
     elif len(args) == 2 and args[0] == "head":
-        df = read_table(args[1])
+        df = read_table(args[1], grader=grader)
         print(df.head())
         print(f"Số dòng: {len(df)}, số cột: {df.shape[1]}")
     else:
         print("Cách dùng:")
-        print("  python -m storage.r2 list [prefix]")
-        print("  python -m storage.r2 head <key>")
+        print("  python -m storage.r2 list [prefix] [--grader]")
+        print("  python -m storage.r2 head <key> [--grader]")

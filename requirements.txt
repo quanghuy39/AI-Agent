@@ -3,3 +3,4 @@ pyyaml
 boto3
 pandas
 pyarrow
+openpyxl
