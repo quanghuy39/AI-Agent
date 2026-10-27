@@ -10,7 +10,7 @@ settings:
   allowed_fails: 1
   max_fallbacks: 4
   json_retries: 2             # số lần thử lại khi JSON sai schema
-  cooldown_scope: provider    # theo thiết kế 6.6 (cả hãng). Cần quyết định lại, xem ghi chú của Claude ở mục 4.
+  cooldown_scope: model       # chọn (b) ngày 27/10/2026: tạm loại theo từng model, khác thiết kế 6.6 (cả hãng).
 
 # ---------- Danh sách model ----------
 # litellm_model: tên theo LiteLLM (tiền tố hãng/tên model). Xác nhận bằng lần gọi thật ở mục 5.
