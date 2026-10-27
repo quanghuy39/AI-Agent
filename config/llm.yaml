@@ -7,10 +7,11 @@ settings:
   num_retries: 1              # số lần thử lại khi 5xx hoặc timeout, trước khi chuyển hãng kế
   retry_after_s: 5
   cooldown_s: 60              # thời gian một mục bị tạm loại sau khi hết hạn mức hoặc lỗi lặp lại
-  allowed_fails: 1
-  max_fallbacks: 4
+  cooldown_max_s: 3600
+  cooldown_not_found_s: 3600
+  cooldown_whole_provider: [openrouter]
+  allowed_fails: 2
   json_retries: 2             # số lần thử lại khi JSON sai schema
-  cooldown_scope: model       # chọn (b) ngày 27/10/2026: tạm loại theo từng model, khác thiết kế 6.6 (cả hãng).
 
 # ---------- Danh sách model ----------
 # litellm_model: tên theo LiteLLM (tiền tố hãng/tên model). Xác nhận bằng lần gọi thật ở mục 5.
