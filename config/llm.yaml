@@ -1,0 +1,125 @@
+# config/llm.yaml - KHÔNG chứa khóa API. Khóa nằm trong .env (api_key_env chỉ là tên biến).
+# Số liệu hạn mức lấy từ trang hạn mức của từng hãng ngày 27/10/2026. Các số khởi điểm chỉnh sau khi chạy thật.
+
+settings:
+  enforce_validation: false   # false: chạy cả model chưa qua kiểm định. Ngày 5 chốt chuỗi xong thì đổi thành true.
+  timeout_s: 60
+  num_retries: 1              # số lần thử lại khi 5xx hoặc timeout, trước khi chuyển hãng kế
+  retry_after_s: 5
+  cooldown_s: 60              # thời gian một mục bị tạm loại sau khi hết hạn mức hoặc lỗi lặp lại
+  allowed_fails: 1
+  max_fallbacks: 4
+  json_retries: 2             # số lần thử lại khi JSON sai schema
+  cooldown_scope: provider    # theo thiết kế 6.6 (cả hãng). Cần quyết định lại, xem ghi chú của Claude ở mục 4.
+
+# ---------- Danh sách model ----------
+# litellm_model: tên theo LiteLLM (tiền tố hãng/tên model). Xác nhận bằng lần gọi thật ở mục 5.
+# limits: null = chưa biết. rpm = request/phút, rpd = request/ngày, tpm = token/phút, tpd = token/ngày.
+# max_input_tokens, max_tokens: giới hạn tự đặt để không vượt hạn mức token/phút.
+models:
+  gemini_3_8_flash:
+    provider: gemini
+    litellm_model: gemini/gemini-3.8-flash
+    api_key_env: GEMINI_API_KEY
+    limits: {rpm: 5, rpd: 20, tpm: 250000, tpd: null}
+    max_input_tokens: 30000
+    max_tokens: 4000
+    data_note: "Gói free: Google dùng dữ liệu để cải thiện sản phẩm, không tắt được. Chỉ gửi dữ liệu không nhạy cảm."
+
+  gemini_3_5_flash_lite:
+    provider: gemini
+    litellm_model: gemini/gemini-3.5-flash-lite
+    api_key_env: GEMINI_API_KEY
+    limits: {rpm: 15, rpd: 500, tpm: 250000, tpd: null}
+    max_input_tokens: 30000
+    max_tokens: 4000
+    data_note: "Như trên."
+
+  gemma_4_31b:
+    provider: gemini
+    litellm_model: gemini/gemma-4-31b-it
+    api_key_env: GEMINI_API_KEY
+    limits: {rpm: 30, rpd: 14400, tpm: 16000, tpd: null}
+    max_input_tokens: 9000      # tpm chỉ 16K, gồm cả prompt lẫn phản hồi
+    max_tokens: 3000
+    data_note: "Như trên."
+
+  mistral_codestral:
+    provider: mistral
+    litellm_model: mistral/codestral-2508
+    api_key_env: MISTRAL_API_KEY
+    limits: {rpm: 125, rpd: null, tpm: 625000, tpd: null}   # 2,08 request/giây
+    max_input_tokens: 30000
+    max_tokens: 4000
+    data_note: "Đã tắt huấn luyện trong Privacy (người dùng xác nhận 27/10/2026)."
+
+  mistral_small:
+    provider: mistral
+    litellm_model: mistral/mistral-small-2603
+    api_key_env: MISTRAL_API_KEY
+    limits: {rpm: 60, rpd: null, tpm: 20000, tpd: null}     # 1 request/giây
+    max_input_tokens: 12000
+    max_tokens: 4000
+    data_note: "Như trên."
+
+  groq_gpt_oss_120b:
+    provider: groq
+    litellm_model: groq/openai/gpt-oss-120b
+    api_key_env: GROQ_API_KEY
+    limits: {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
+    max_input_tokens: 5000      # tpm chỉ 8K nên phải giữ nhỏ
+    max_tokens: 2000
+    data_note: "Người dùng đã đọc điều khoản Groq (27/10/2026)."
+
+  groq_gpt_oss_20b:
+    provider: groq
+    litellm_model: groq/openai/gpt-oss-20b
+    api_key_env: GROQ_API_KEY
+    limits: {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
+    max_input_tokens: 5000
+    max_tokens: 2000
+    data_note: "Như trên."
+
+  openrouter_nemotron_super:
+    provider: openrouter
+    litellm_model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+    api_key_env: OPENROUTER_API_KEY
+    limits: {rpm: 20, rpd: 50, tpm: null, tpd: null}        # dùng chung cho mọi model :free
+    max_input_tokens: 12000
+    max_tokens: 4000
+    data_note: "Đã chặn nhà cung cấp huấn luyện trong privacy (người dùng xác nhận 27/10/2026)."
+
+  openrouter_gemma_31b:
+    provider: openrouter
+    litellm_model: openrouter/google/gemma-4-31b-it:free
+    api_key_env: OPENROUTER_API_KEY
+    limits: {rpm: 20, rpd: 50, tpm: null, tpd: null}
+    max_input_tokens: 12000
+    max_tokens: 4000
+    data_note: "Như trên. Có thể không còn route nếu bộ lọc chặn nhà cung cấp huấn luyện, kiểm tra ở mục 5."
+
+# ---------- Chuỗi fallback theo vai trò ----------
+# Thứ tự từ trên xuống. validated: true chỉ khi model đã qua bộ kiểm định của vai trò đó (Ngày 5).
+roles:
+  analysis:
+    chain:
+      - {model: gemini_3_8_flash, validated: false}
+      - {model: mistral_codestral, validated: false}
+      - {model: gemma_4_31b, validated: false}
+      - {model: groq_gpt_oss_120b, validated: false}
+      - {model: openrouter_nemotron_super, validated: false}
+
+  report:
+    chain:
+      - {model: gemini_3_5_flash_lite, validated: false}
+      - {model: gemma_4_31b, validated: false}
+      - {model: mistral_small, validated: false}
+      - {model: groq_gpt_oss_120b, validated: false}
+      - {model: openrouter_gemma_31b, validated: false}
+
+  slide:
+    chain:
+      - {model: gemini_3_5_flash_lite, validated: false}
+      - {model: mistral_small, validated: false}
+      - {model: groq_gpt_oss_20b, validated: false}
+      - {model: openrouter_gemma_31b, validated: false}
