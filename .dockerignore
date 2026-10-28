@@ -1,0 +1,25 @@
+# Bi mat: khong bao gio dua vao image (truyen luc chay bang --env-file)
+.env
+.env.*
+!.env.example
+
+# Git va moi truong local
+.git
+.gitignore
+.venv
+
+# File sinh ra
+__pycache__
+**/__pycache__
+*.pyc
+**/*.pyc
+.pytest_cache
+cache/
+output/
+*.sqlite
+**/*.sqlite
+*.jsonl
+**/*.jsonl
+
+# Test khong can trong image
+tests/

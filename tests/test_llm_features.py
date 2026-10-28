@@ -592,7 +592,7 @@ def test_k_fake_follows_script_and_restores_backend(fake_usage):
 
     lines = usage_lines(fake_usage)
     assert [line["status"] for line in lines] == ["ok", "ok", "request_error"]
-    assert all(line["provider"] == "fake" for line in lines)
+    assert all(line["extra"]["provider"] == "fake" for line in lines)
 
 
 def test_k_fake_restores_backend_on_exception(fake_usage):

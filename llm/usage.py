@@ -1,4 +1,9 @@
-"""Ghi moi luot ask_model thanh mot dong JSON Lines. KHONG ghi noi dung prompt, cau tra loi hay khoa."""
+"""Ghi moi luot ask_model thanh mot dong JSON Lines. KHONG ghi noi dung prompt, cau tra loi hay khoa.
+
+Mac dinh (chua goi set_usage_log_path): ban ghi phang vao usage_log_path cua llm.yaml.
+Da goi set_usage_log_path(path): moi luot la mot dong dung hinh dang LogEvent (ledger/schema.py) de nam
+chung run_log.jsonl cua bai. Khong import ledger o day de tranh vong import; dict duoi tu dung dung khoa.
+"""
 
 import json
 import logging
@@ -44,11 +49,28 @@ def make_record(**fields):
     return record
 
 
+def as_log_event(record):
+    """Ban ghi usage -> dict dung khoa cua LogEvent: ts, step, action, inputs, code_file, checks, status, extra."""
+    extra = {k: v for k, v in record.items() if k not in ("ts", "event", "status")}
+    return {
+        "ts": record.get("ts") or datetime.now().astimezone().isoformat(timespec="seconds"),
+        "step": "llm",
+        "action": "llm_call",
+        "inputs": {},
+        "code_file": None,
+        "checks": [],
+        "status": record.get("status") or "ok",
+        "extra": extra,
+    }
+
+
 def write_usage(record, default_path=None):
     """Ghi mot dong. Loi ghi file chi canh bao, khong lam hong luot goi."""
     path = _resolve(default_path)
     if path is None:
         return
+    if _path_override is not None:
+        record = as_log_event(record)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
