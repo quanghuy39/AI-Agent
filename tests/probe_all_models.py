@@ -50,7 +50,7 @@ def main():
 
         _reset_runtime_state()
         try:
-            r = client._ask(messages, role, start_model=model_key)
+            r = client._ask(messages, role, start_model=model_key, use_cache=False)  # phai goi mang that
         except Exception as e:
             status = getattr(e, "status_code", None)
             err_model = getattr(e, "model_key", None)

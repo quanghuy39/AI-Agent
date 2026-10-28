@@ -1,6 +1,6 @@
 """Goi that ask_model dung 1 lan.
 
-Chay: python tests/try_ask_model.py <role> "<prompt>" [--start <model_key>]
+Chay: python tests/try_ask_model.py <role> "<prompt>" [--start <model_key>] [--no-cache]
 """
 
 import argparse
@@ -19,10 +19,11 @@ def main():
     parser.add_argument("role")
     parser.add_argument("prompt")
     parser.add_argument("--start", default=None, help="model_key bắt đầu trong chain")
+    parser.add_argument("--no-cache", action="store_true", help="bỏ qua cache cả đọc lẫn ghi")
     args = parser.parse_args()
 
     messages = [{"role": "user", "content": args.prompt}]
-    r = client._ask(messages, args.role, start_model=args.start)
+    r = client._ask(messages, args.role, start_model=args.start, use_cache=not args.no_cache)
 
     print(f"model_key:         {r.model_key}")
     print(f"provider:          {r.provider}")
@@ -34,6 +35,9 @@ def main():
     for item in r.fallback_reasons:
         print(f"  - {item['model_key']}: {item['reason']} (status={item['status_code']})")
     print(f"latency_s:         {r.latency_s}")
+    print(f"cached:            {r.cached}")
+    print(f"model_switched:    {r.model_switched}")
+    print(f"json_retries:      {r.json_retries}")
     print(f"text[:200]:        {r.text[:200]}")
 
 

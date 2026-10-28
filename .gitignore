@@ -4,3 +4,4 @@ __pycache__/
 cache/
 output/
 test_data/
+.pytest_cache/

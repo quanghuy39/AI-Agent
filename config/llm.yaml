@@ -12,6 +12,8 @@ settings:
   cooldown_whole_provider: [openrouter]
   allowed_fails: 2
   json_retries: 2             # số lần thử lại khi JSON sai schema
+  cache_path: cache/llm_cache.sqlite
+  usage_log_path: cache/llm_usage.jsonl
 
 # ---------- Danh sách model ----------
 # litellm_model: tên theo LiteLLM (tiền tố hãng/tên model). Xác nhận bằng lần gọi thật ở mục 5.

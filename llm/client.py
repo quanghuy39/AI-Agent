@@ -14,6 +14,9 @@ from pathlib import Path
 import yaml
 from dotenv import load_dotenv
 
+from pydantic import ValidationError
+
+from llm import cache, structured, usage
 from llm.errors import LLMChainExhausted, LLMConfigError, LLMError, LLMRequestError
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -49,6 +52,7 @@ REASON_COOLDOWN = "cooldown"
 REASON_RATE_LIMIT = "rate_limit"
 REASON_TRANSIENT = "transient"  # 5xx, timeout, loi mang
 REASON_NOT_FOUND = "not_found"
+REASON_JSON_INVALID = "json_invalid"
 
 
 @dataclass(frozen=True)
@@ -64,6 +68,25 @@ class LLMResult:
     fallback_count: int
     fallback_reasons: list = field(default_factory=list)
     latency_s: float = 0.0
+    data: object = None  # doi tuong pydantic da validate, None neu khong co json_schema
+    json_retries: int = 0
+    cached: bool = False
+    task_id: object = None
+    model_switched: bool = False
+    network_calls: int = 0  # so lan goi litellm.completion that su trong luot, ke ca lan loi
+
+
+@dataclass
+class _Tally:
+    """Cong don trong mot luot ask_model: moi lan goi mang, ke ca thu lai JSON va model that bai."""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    network_calls: int = 0
+
+    def add_usage(self, response):
+        tokens = getattr(response, "usage", None)
+        self.prompt_tokens += getattr(tokens, "prompt_tokens", None) or 0
+        self.completion_tokens += getattr(tokens, "completion_tokens", None) or 0
 
 
 @dataclass(frozen=True)
@@ -80,7 +103,8 @@ _state = None
 # Trang thai luc chay, khoa la model_key (dung chung giua cac role).
 _cooldown_until = {}  # model_key -> thoi diem (epoch giay) het cooldown
 _rate_limit_streak = {}  # model_key -> so lan 429 lien tiep
-_fail_counts = {}  # model_key -> so lan loi tam thoi lien tiep
+_fail_counts = {}  # model_key -> so luot loi tam thoi lien tiep
+_task_models = {}  # task_id -> model_key da gan
 
 
 def _now():
@@ -263,14 +287,16 @@ def _format_time(ts):
 
 # ---------- Vong lap ----------
 
-def _try_model(state, model_key, messages):
+def _try_model(state, model_key, messages, tally=None):
     """Goi mot model, gom ca thu lai. Tra ve (response, None) neu thanh cong,
     (None, {model_key, reason, status_code}) neu can chuyen model ke."""
     settings = state.settings
     model = state.models[model_key]
     retries = settings["num_retries"]
+    tally = tally if tally is not None else _Tally()
 
     for attempt in range(retries + 1):
+        tally.network_calls += 1
         try:
             response = _completion(
                 model=model["litellm_model"],
@@ -319,52 +345,138 @@ def _try_model(state, model_key, messages):
                 _fail_counts[model_key] = 0
             return None, {"model_key": model_key, "reason": REASON_TRANSIENT, "status_code": status}
 
+        tally.add_usage(response)
         _on_success(model_key)
         return response, None
 
 
-def _ask(messages, role, start_model=None, json_schema=None, task_id=None):
-    """Nhu ask_model, nhung cho phep chon model bat dau (start_model) trong chain."""
-    state = _get_state()
-    if role not in state.chains:
-        raise LLMConfigError(f"Role '{role}' không có trong cấu hình. Có: {sorted(state.chains)}.")
-    chain = state.chains[role]
-    if not chain:
-        raise LLMConfigError(
-            f"Role '{role}' không còn model nào (enforce_validation=true và chưa có mục validated)."
-        )
-    if start_model is None:
-        start_model = chain[0]
-    elif start_model not in chain:
-        raise LLMConfigError(f"Model '{start_model}' không nằm trong chain của role '{role}': {chain}.")
+def _try_model_json(state, model_key, messages, json_schema, tally):
+    """Goi mot model, kiem tra JSON neu co schema. Tra ve (response, data, failure, json_retries)."""
+    if json_schema is None:
+        response, failure = _try_model(state, model_key, messages, tally)
+        return response, None, failure, 0
 
-    reasons = []
+    max_retries = state.settings.get("json_retries", 0)
+    msgs = list(messages) + [structured.instruction_message(json_schema)]
+    for attempt in range(max_retries + 1):
+        response, failure = _try_model(state, model_key, msgs, tally)
+        if failure is not None:
+            return None, None, failure, attempt
+        text = response.choices[0].message.content or ""
+        try:
+            return response, structured.parse(text, json_schema), None, attempt
+        except ValidationError as e:
+            summary = structured.summarize_error(e)
+        if attempt == max_retries:
+            break
+        if text:  # mot so hang tu choi tin nhan assistant rong
+            msgs = msgs + [{"role": "assistant", "content": text}]
+        msgs = msgs + [structured.retry_message(summary)]
+    return None, None, {"model_key": model_key, "reason": REASON_JSON_INVALID, "status_code": None}, max_retries
+
+
+def _order(chain, start_model, pinned):
+    """Thu tu thu model: chain tu start_model; model da gan theo task_id (neu con dung duoc) len dau."""
+    base = chain[chain.index(start_model):]
+    if pinned in base and not _in_cooldown(pinned, _now()):
+        return [pinned] + [k for k in base if k != pinned]
+    return base
+
+
+def _bind_task(task_id, model_key):
+    """Gan task_id vao model tra loi. Tra ve model_switched."""
+    if task_id is None:
+        return False
+    pinned = _task_models.get(task_id)
+    _task_models[task_id] = model_key
+    return pinned is not None and pinned != model_key
+
+
+def _from_cache(state, role, prompt_hash, json_schema, task_id):
     t0 = time.perf_counter()
-    for model_key in chain[chain.index(start_model):]:
+    hit = cache.get(state.settings["cache_path"], prompt_hash)
+    if hit is None:
+        return None
+    data = None
+    if json_schema is not None:
+        try:
+            data = structured.parse(hit["text"], json_schema)
+        except ValidationError:
+            log.warning("Bản ghi cache %s không còn khớp schema, bỏ qua.", prompt_hash[:12])
+            return None
+    return LLMResult(
+        text=hit["text"],
+        role=role,
+        model_key=hit["model_key"],
+        provider=hit["provider"],
+        litellm_model=hit["litellm_model"],
+        prompt_tokens=hit["prompt_tokens"],
+        completion_tokens=hit["completion_tokens"],
+        finish_reason=hit["finish_reason"],
+        fallback_count=0,
+        fallback_reasons=[],
+        latency_s=round(time.perf_counter() - t0, 3),
+        data=data,
+        json_retries=0,
+        cached=True,
+        task_id=task_id,
+        model_switched=_bind_task(task_id, hit["model_key"]),
+    )
+
+
+def _to_cache(state, prompt_hash, result):
+    cache.put(state.settings["cache_path"], prompt_hash, {
+        "text": result.text,
+        "model_key": result.model_key,
+        "provider": result.provider,
+        "litellm_model": result.litellm_model,
+        "prompt_tokens": result.prompt_tokens,
+        "completion_tokens": result.completion_tokens,
+        "finish_reason": result.finish_reason,
+        "cached_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    })
+
+
+def _run_chain(state, messages, role, chain, start_model, json_schema, task_id, tally):
+    reasons = []
+    json_retries = 0
+    t0 = time.perf_counter()
+    pinned = _task_models.get(task_id) if task_id is not None else None
+    for model_key in _order(chain, start_model, pinned):
         if _in_cooldown(model_key, _now()):
             reasons.append({"model_key": model_key, "reason": REASON_COOLDOWN, "status_code": None})
             continue
 
-        response, failure = _try_model(state, model_key, messages)
+        try:
+            response, data, failure, used = _try_model_json(state, model_key, messages, json_schema, tally)
+        except LLMError as e:
+            e.fallback_reasons = list(reasons)  # de ghi usage
+            raise
+        json_retries += used
         if failure is not None:
             reasons.append(failure)
             continue
 
         model = state.models[model_key]
         choice = response.choices[0]
-        usage = getattr(response, "usage", None)
         return LLMResult(
             text=choice.message.content or "",
             role=role,
             model_key=model_key,
             provider=model["provider"],
             litellm_model=model["litellm_model"],
-            prompt_tokens=getattr(usage, "prompt_tokens", None),
-            completion_tokens=getattr(usage, "completion_tokens", None),
+            prompt_tokens=tally.prompt_tokens,  # tong moi lan goi mang trong luot
+            completion_tokens=tally.completion_tokens,
             finish_reason=choice.finish_reason,
             fallback_count=len(reasons),
             fallback_reasons=reasons,
             latency_s=round(time.perf_counter() - t0, 3),
+            data=data,
+            json_retries=json_retries,
+            cached=False,
+            task_id=task_id,
+            model_switched=_bind_task(task_id, model_key),
+            network_calls=tally.network_calls,
         )
 
     now = _now()
@@ -380,6 +492,87 @@ def _ask(messages, role, start_model=None, json_schema=None, task_id=None):
     )
 
 
-def ask_model(messages, role, json_schema=None, task_id=None):
-    """Gui messages toi chuoi model cua role. json_schema, task_id: de danh cho buoc sau."""
-    return _ask(messages, role, start_model=None, json_schema=json_schema, task_id=task_id)
+def _log_ok(state, result, prompt_hash):
+    if result.cached:
+        # khong ton token o luot nay; token goc ghi rieng
+        tokens = {
+            "prompt_tokens": 0, "completion_tokens": 0, "network_calls": 0,
+            "cached_prompt_tokens": result.prompt_tokens, "cached_completion_tokens": result.completion_tokens,
+        }
+    else:
+        tokens = {
+            "prompt_tokens": result.prompt_tokens, "completion_tokens": result.completion_tokens,
+            "network_calls": result.network_calls,
+        }
+    usage.write_usage(usage.make_record(
+        role=result.role, task_id=result.task_id, status="cache_hit" if result.cached else "ok",
+        provider=result.provider, model_key=result.model_key, litellm_model=result.litellm_model,
+        **tokens,
+        fallback_count=result.fallback_count, fallback_reasons=result.fallback_reasons,
+        model_switched=result.model_switched, cached=result.cached, json_retries=result.json_retries,
+        latency_s=result.latency_s, prompt_hash=prompt_hash,
+    ), state.settings.get("usage_log_path"))
+
+
+def _log_error(state, e, role, task_id, prompt_hash, t0, tally):
+    if isinstance(e, LLMRequestError):
+        status = "request_error"
+    elif isinstance(e, LLMChainExhausted):
+        status = "chain_exhausted"
+    else:
+        status = "error"
+    reasons = e.attempts if isinstance(e, LLMChainExhausted) else getattr(e, "fallback_reasons", [])
+    model_key = getattr(e, "model_key", None)
+    model = state.models.get(model_key, {}) if state is not None and model_key else {}
+    usage.write_usage(usage.make_record(
+        role=role, task_id=task_id, status=status,
+        provider=getattr(e, "provider", None), model_key=model_key, litellm_model=model.get("litellm_model"),
+        prompt_tokens=tally.prompt_tokens, completion_tokens=tally.completion_tokens,
+        network_calls=tally.network_calls,
+        fallback_count=len(reasons), fallback_reasons=reasons, model_switched=False, cached=False,
+        latency_s=round(time.perf_counter() - t0, 3), error_type=type(e).__name__,
+        status_code=getattr(e, "status_code", None), prompt_hash=prompt_hash,
+    ), state.settings.get("usage_log_path") if state is not None else None)
+
+
+def _ask(messages, role, start_model=None, json_schema=None, task_id=None, use_cache=True):
+    """Nhu ask_model, nhung cho phep chon model bat dau (start_model) trong chain."""
+    t0 = time.perf_counter()
+    state = prompt_hash = None
+    tally = _Tally()
+    try:
+        state = _get_state()
+        structured.check_schema(json_schema)
+        if role not in state.chains:
+            raise LLMConfigError(f"Role '{role}' không có trong cấu hình. Có: {sorted(state.chains)}.")
+        chain = state.chains[role]
+        if not chain:
+            raise LLMConfigError(
+                f"Role '{role}' không còn model nào (enforce_validation=true và chưa có mục validated)."
+            )
+        if start_model is None:
+            start_model = chain[0]
+        elif start_model not in chain:
+            raise LLMConfigError(f"Model '{start_model}' không nằm trong chain của role '{role}': {chain}.")
+
+        prompt_hash = cache.cache_key(role, messages, structured.schema_json(json_schema))
+        use_cache = use_cache and state.settings.get("cache_path") is not None
+        result = _from_cache(state, role, prompt_hash, json_schema, task_id) if use_cache else None
+        if result is None:
+            result = _run_chain(state, messages, role, chain, start_model, json_schema, task_id, tally)
+            if use_cache:
+                _to_cache(state, prompt_hash, result)
+    except Exception as e:
+        _log_error(state, e, role, task_id, prompt_hash, t0, tally)
+        raise
+    _log_ok(state, result, prompt_hash)
+    return result
+
+
+def ask_model(messages, role, json_schema=None, task_id=None, use_cache=True):
+    """Gui messages toi chuoi model cua role.
+
+    json_schema: lop pydantic BaseModel; cau tra loi phai la JSON dung schema, ket qua o LLMResult.data.
+    task_id: giu model theo task (thu model da gan truoc). use_cache=False: bo qua cache ca doc lan ghi.
+    """
+    return _ask(messages, role, start_model=None, json_schema=json_schema, task_id=task_id, use_cache=use_cache)
