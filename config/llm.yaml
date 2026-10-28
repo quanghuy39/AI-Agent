@@ -25,7 +25,7 @@ models:
     limits: {rpm: 5, rpd: 20, tpm: 250000, tpd: null}
     max_input_tokens: 30000
     max_tokens: 4000
-    data_note: "Gói free: Google dùng dữ liệu để cải thiện sản phẩm, không tắt được. Chỉ gửi dữ liệu không nhạy cảm."
+    data_note: "Gói free: Google dùng dữ liệu để cải thiện sản phẩm, không tắt được. Chỉ gửi dữ liệu không nhạy cảm. Gọi thật 28/10/2026 trả 503 quá tải nhất thời (tên model và khóa đúng)."
 
   gemini_3_5_flash_lite:
     provider: gemini
@@ -43,7 +43,7 @@ models:
     limits: {rpm: 30, rpd: 14400, tpm: 16000, tpd: null}
     max_input_tokens: 9000      # tpm chỉ 16K, gồm cả prompt lẫn phản hồi
     max_tokens: 3000
-    data_note: "Như trên."
+    data_note: "Như trên. Gọi thật 28/10/2026 trả 500 Internal error sau 36 giây, cần thử lại."
 
   mistral_codestral:
     provider: mistral
@@ -54,14 +54,14 @@ models:
     max_tokens: 4000
     data_note: "Đã tắt huấn luyện trong Privacy (người dùng xác nhận 27/10/2026)."
 
-  mistral_small:
+  mistral_ministral_14b:
     provider: mistral
-    litellm_model: mistral/mistral-small-2603
+    litellm_model: mistral/ministral-14b-2512
     api_key_env: MISTRAL_API_KEY
-    limits: {rpm: 60, rpd: null, tpm: 20000, tpd: null}     # 1 request/giây
-    max_input_tokens: 12000
+    limits: {rpm: 30, rpd: null, tpm: 937500, tpd: null}
+    max_input_tokens: 30000
     max_tokens: 4000
-    data_note: "Như trên."
+    data_note: "Đã tắt huấn luyện trong Privacy (người dùng xác nhận 27/10/2026). mistral-small và mistral-medium bị chặn ở gói free (0 request/phút), mistral-large trả 403."
 
   groq_gpt_oss_120b:
     provider: groq
@@ -81,23 +81,14 @@ models:
     max_tokens: 2000
     data_note: "Như trên."
 
-  openrouter_nemotron_super:
+  openrouter_cohere_north_mini_code:
     provider: openrouter
-    litellm_model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
-    api_key_env: OPENROUTER_API_KEY
-    limits: {rpm: 20, rpd: 50, tpm: null, tpd: null}        # dùng chung cho mọi model :free
-    max_input_tokens: 12000
-    max_tokens: 4000
-    data_note: "Đã chặn nhà cung cấp huấn luyện trong privacy (người dùng xác nhận 27/10/2026)."
-
-  openrouter_gemma_31b:
-    provider: openrouter
-    litellm_model: openrouter/google/gemma-4-31b-it:free
+    litellm_model: openrouter/cohere/north-mini-code:free
     api_key_env: OPENROUTER_API_KEY
     limits: {rpm: 20, rpd: 50, tpm: null, tpd: null}
     max_input_tokens: 12000
     max_tokens: 4000
-    data_note: "Như trên. Có thể không còn route nếu bộ lọc chặn nhà cung cấp huấn luyện, kiểm tra ở mục 5."
+    data_note: "Gọi thật 28/10/2026 qua Cohere, vượt bộ lọc riêng tư. Chỉ ~3B tham số hoạt động, chất lượng chưa biết. Hạn mức dùng chung cho mọi model :free. nemotron-3-super đã bị gỡ khỏi gói free; nemotron-3-ultra, nemotron-3.5-lightning bị chặn bởi bộ lọc huấn luyện; inkling-small chỉ dùng được trong agent harness."
 
 # ---------- Chuỗi fallback theo vai trò ----------
 # Thứ tự từ trên xuống. validated: true chỉ khi model đã qua bộ kiểm định của vai trò đó (Ngày 5).
@@ -108,19 +99,19 @@ roles:
       - {model: mistral_codestral, validated: false}
       - {model: gemma_4_31b, validated: false}
       - {model: groq_gpt_oss_120b, validated: false}
-      - {model: openrouter_nemotron_super, validated: false}
+      - {model: openrouter_cohere_north_mini_code, validated: false}
 
   report:
     chain:
       - {model: gemini_3_5_flash_lite, validated: false}
       - {model: gemma_4_31b, validated: false}
-      - {model: mistral_small, validated: false}
+      - {model: mistral_ministral_14b, validated: false}
       - {model: groq_gpt_oss_120b, validated: false}
-      - {model: openrouter_gemma_31b, validated: false}
+      - {model: openrouter_cohere_north_mini_code, validated: false}
 
   slide:
     chain:
       - {model: gemini_3_5_flash_lite, validated: false}
-      - {model: mistral_small, validated: false}
+      - {model: mistral_ministral_14b, validated: false}
       - {model: groq_gpt_oss_20b, validated: false}
-      - {model: openrouter_gemma_31b, validated: false}
+      - {model: openrouter_cohere_north_mini_code, validated: false}
