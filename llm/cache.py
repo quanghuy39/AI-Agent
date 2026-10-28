@@ -14,11 +14,12 @@ ROOT = Path(__file__).resolve().parent.parent
 _SCHEMA = "CREATE TABLE IF NOT EXISTS llm_cache (key TEXT PRIMARY KEY, value TEXT NOT NULL, created_at TEXT NOT NULL)"
 
 
-def cache_key(role, messages, schema_json):
-    payload = json.dumps(
-        {"role": role, "messages": messages, "schema_json": schema_json},
-        sort_keys=True, ensure_ascii=False,
-    )
+def cache_key(role, messages, schema_json, model_key=None):
+    """model_key=None (ask_model): khoa khong co ten model. ask_one_model truyen model_key de khoa rieng."""
+    payload = {"role": role, "messages": messages, "schema_json": schema_json}
+    if model_key is not None:
+        payload["model_key"] = model_key
+    payload = json.dumps(payload, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 

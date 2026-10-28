@@ -45,22 +45,30 @@ class FakeLLM:
         except Exception:  # noqa: BLE001
             return None
 
-    def _log(self, **fields):
+    def _log(self, model_key=FAKE, **fields):
         usage.write_usage(usage.make_record(
-            provider=FAKE, model_key=FAKE, litellm_model=FAKE,
+            provider=FAKE, model_key=model_key, litellm_model=FAKE,
             fallback_count=0, fallback_reasons=[], model_switched=False, cached=False, json_retries=0,
             network_calls=0, **fields,
         ), self._default_usage_path())
 
     def ask_model(self, messages, role, json_schema=None, task_id=None, use_cache=True):
+        return self._respond(messages, role, json_schema, task_id, use_cache, model_key=None)
+
+    def ask_one_model(self, messages, role, model_key, json_schema=None, use_cache=False, task_id=None):
+        """Nhu ask_model; LLMResult.model_key la model_key duoc chi dinh, provider van la 'fake'."""
+        return self._respond(messages, role, json_schema, task_id, use_cache, model_key=model_key)
+
+    def _respond(self, messages, role, json_schema, task_id, use_cache, model_key):
         t0 = time.perf_counter()
         structured.check_schema(json_schema)
         self.calls.append({
             "messages": messages, "role": role, "json_schema": json_schema,
-            "task_id": task_id, "use_cache": use_cache,
+            "task_id": task_id, "use_cache": use_cache, "model_key": model_key,
         })
         item = self._next(role)
-        common = {"role": role, "task_id": task_id}
+        model_key = model_key or FAKE
+        common = {"role": role, "task_id": task_id, "model_key": model_key}
 
         if isinstance(item, BaseException):
             if isinstance(item, LLMRequestError):
@@ -80,7 +88,7 @@ class FakeLLM:
             try:
                 data = structured.parse(text, json_schema)
             except ValidationError as e:
-                attempts = [{"model_key": FAKE, "reason": "json_invalid", "status_code": None}]
+                attempts = [{"model_key": model_key, "reason": "json_invalid", "status_code": None}]
                 exc = LLMChainExhausted(
                     f"FakeLLM: câu trả lời không đúng schema {json_schema.__name__}: "
                     f"{structured.summarize_error(e)}",
@@ -91,7 +99,7 @@ class FakeLLM:
                 raise exc from None
 
         result = LLMResult(
-            text=text, role=role, model_key=FAKE, provider=FAKE, litellm_model=FAKE,
+            text=text, role=role, model_key=model_key, provider=FAKE, litellm_model=FAKE,
             prompt_tokens=0, completion_tokens=0, finish_reason="stop",
             fallback_count=0, fallback_reasons=[], latency_s=round(time.perf_counter() - t0, 3),
             data=data, json_retries=0, cached=False, task_id=task_id, model_switched=False,

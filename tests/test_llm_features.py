@@ -50,6 +50,7 @@ settings:
 
 models:
   a1: {{provider: gemini, litellm_model: gemini/a1, api_key_env: GEMINI_API_KEY, max_tokens: 100}}
+  a2: {{provider: gemini, litellm_model: gemini/a2, api_key_env: GEMINI_API_KEY, max_tokens: 100}}
   m1: {{provider: mistral, litellm_model: mistral/m1, api_key_env: MISTRAL_API_KEY, max_tokens: 100}}
   g1: {{provider: groq, litellm_model: groq/g1, api_key_env: GROQ_API_KEY, max_tokens: 100}}
 
@@ -450,6 +451,83 @@ def test_config_error_row_has_zero_network_calls(env):
         client.ask_model(msgs(), "khong_co")
     line = usage_lines(env.usage_path)[0]
     assert (line["prompt_tokens"], line["completion_tokens"], line["network_calls"]) == (0, 0, 0)
+
+
+# ---------- ask_one_model ----------
+
+def test_one_model_429_does_not_call_next(env):
+    env.llm.plan["gemini/a1"] = ["429"]
+    with pytest.raises(LLMChainExhausted) as ei:
+        client.ask_one_model(msgs(), "r1", "a1")
+    assert env.llm.models() == ["gemini/a1"]  # KHONG goi m1
+    assert ei.value.attempts == [{"model_key": "a1", "reason": "rate_limit", "status_code": 429}]
+    assert ei.value.next_available_at == T0 + 60
+    assert ei.value.llm_usage == {"prompt_tokens": 0, "completion_tokens": 0, "network_calls": 1}
+
+
+def test_one_model_not_in_chain(env):
+    with pytest.raises(llm.LLMConfigError):
+        client.ask_one_model(msgs(), "r1", "a2")
+    with pytest.raises(llm.LLMConfigError):
+        client.ask_one_model(msgs(), "khong_co", "a1")
+    assert env.llm.calls == []
+
+
+def test_one_model_calls_only_that_model_with_json_retry(env):
+    env.llm.plan["mistral/m1"] = ["sai", GOOD_JSON]
+    r = client.ask_one_model(msgs(), "r1", "m1", json_schema=Item)
+    assert env.llm.models() == ["mistral/m1", "mistral/m1"]
+    assert (r.model_key, r.json_retries, r.fallback_count, r.network_calls) == ("m1", 1, 0, 2)
+    assert (r.prompt_tokens, r.completion_tokens) == (22, 10)
+    assert r.data == Item(name="táo", qty=2) and r.cached is False
+    line = usage_lines(env.usage_path)[0]
+    assert (line["status"], line["model_key"], line["network_calls"]) == ("ok", "m1", 2)
+
+
+def test_one_model_json_invalid_raises_with_usage(env):
+    env.llm.plan["gemini/a1"] = ["sai"]
+    with pytest.raises(LLMChainExhausted) as ei:
+        client.ask_one_model(msgs(), "r1", "a1", json_schema=Item)
+    assert ei.value.attempts == [{"model_key": "a1", "reason": "json_invalid", "status_code": None}]
+    assert ei.value.llm_usage == {"prompt_tokens": 33, "completion_tokens": 15, "network_calls": 3}
+    assert env.llm.models() == ["gemini/a1"] * 3
+
+
+def test_one_model_request_error(env):
+    env.llm.plan["groq/g1"] = ["401"]
+    with pytest.raises(LLMRequestError) as ei:
+        client.ask_one_model(msgs(), "r1", "g1")
+    assert (ei.value.model_key, ei.value.status_code) == ("g1", 401)
+
+
+def test_one_model_does_not_cooldown_other_models(env):
+    client._get_state().settings["cooldown_whole_provider"] = ["gemini"]
+    env.llm.plan["gemini/a1"] = ["429"]
+    with pytest.raises(LLMChainExhausted):
+        client.ask_one_model(msgs(), "r1", "a1")
+    assert "a1" in client._cooldown_until
+    assert "a2" not in client._cooldown_until  # cung hang nhung khong bi dong
+
+    with pytest.raises(LLMChainExhausted) as ei:  # dang cooldown -> khong goi
+        client.ask_one_model(msgs(), "r1", "a1")
+    assert ei.value.attempts[0]["reason"] == "cooldown"
+    assert env.llm.models() == ["gemini/a1"]
+
+
+def test_one_model_cache_is_separate_from_ask_model(env):
+    client.ask_model(msgs(), "r1")  # a1 tra loi, ghi cache khoa chung
+    r = client.ask_one_model(msgs(), "r1", "m1", use_cache=True)
+    assert r.cached is False and r.model_key == "m1"
+    r = client.ask_one_model(msgs(), "r1", "m1", use_cache=True)
+    assert r.cached is True and r.model_key == "m1"
+    assert env.llm.models() == ["gemini/a1", "mistral/m1"]
+
+
+def test_one_model_via_fake_backend(fake_usage):
+    with use_fake(FakeLLM([{"name": "x", "qty": 1}])) as fake:
+        r = llm.ask_one_model(msgs(), "analysis", "groq_gpt_oss_120b", json_schema=Item)
+    assert (r.model_key, r.provider, r.data.qty) == ("groq_gpt_oss_120b", "fake", 1)
+    assert fake.calls[0]["model_key"] == "groq_gpt_oss_120b"
 
 
 # ---------- (j) an danh ----------

@@ -5,3 +5,4 @@ cache/
 output/
 test_data/
 .pytest_cache/
+tests/llm_eval/results/
