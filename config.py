@@ -40,6 +40,30 @@ LLM_KEY_VARS = [
 ]
 OTHER_VARS = ["DEFAULT_ENGINE", "CAUTION_LEVEL", "LLM_CONFIG_PATH"]
 
+# ---------- Profiling (Ngay 4) ----------
+# Mot kieu duoc nhan khi ty le gia tri khong rong khop kieu do >= nguong nay.
+TYPE_INFER_MIN_RATIO = 0.95
+# Tu 2 dinh dang ngay tro len, moi cai chiem >= ty le nay -> co mixed_date_formats.
+DATE_MIXED_MIN_RATIO = 0.05
+# Thu tu co y nghia: hoa giua cac dinh dang dat nguong thi dinh dang dung truoc duoc ghi truoc.
+# Dinh dang co %H -> kieu "datetime", chi co ngay -> "date".
+DATE_FORMATS = [
+    "%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%d%m%Y", "%Y%m%d",
+    "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M",
+    "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%d.%m.%Y",
+]
+# top_values: liet ke het neu so gia tri khac nhau <= TOP_VALUES_MAX_UNIQUE, nguoc lai lay TOP_VALUES_N.
+TOP_VALUES_MAX_UNIQUE = 20
+TOP_VALUES_N = 5
+# Doan khoa khi khong truyen key_cols: ten cot chua mot TU trong danh sach (khong phan biet hoa thuong,
+# tach tu theo _ - khoang trang va camelCase) va ty le gia tri duy nhat >= KEY_MIN_UNIQUE_RATIO.
+# Thu tu trong danh sach la thu tu uu tien khi chon giua cac ung vien.
+KEY_NAME_HINTS = ["id", "ma", "code", "key"]
+KEY_MIN_UNIQUE_RATIO = 0.9
+# Tom tat profiling: cot co cau truc chinh chiem >= 1 - ty le nay va con gia tri lech cau truc
+# duoc in o dong "cau truc thieu so" (cot von da dang thi khong in).
+MINORITY_PATTERN_RATIO = 0.05
+
 
 def get_r2_settings():
     """Tra ve dict cau hinh R2; bao loi ro neu thieu bien."""

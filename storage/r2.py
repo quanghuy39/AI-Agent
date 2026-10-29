@@ -1,4 +1,5 @@
 """Module storage: doc/ghi du lieu tren Cloudflare R2 (tuong thich S3)."""
+import csv
 import sys
 from pathlib import Path
 
@@ -9,6 +10,9 @@ from botocore.config import Config
 from config import ROOT, get_r2_settings
 
 CACHE_DIR = ROOT / "cache"
+CSV_ENCODINGS = ("utf-8-sig", "cp1258", "latin-1")
+CSV_DELIMITERS = ",;\t|"
+CSV_SNIFF_BYTES = 8192
 
 
 def _check_read(key_or_prefix, grader=False):
@@ -109,12 +113,51 @@ def upload_file(local_path, key):
     return key
 
 
-def read_table(key, grader=False):
-    """Tai (co cache) roi doc thanh dataframe."""
+def read_table(key, grader=False, dtype=None):
+    """Tai (co cache) roi doc thanh dataframe.
+
+    dtype=None: nhu cu (pandas tu doan kieu). dtype=str: moi cot la chuoi, null mac dinh cua pandas
+    giu la null (giu nguyen "05042025", "4.0"...). Voi parquet (da co kieu san) dtype=str chi doi
+    tung gia tri khac null sang str.
+    """
     path = download_with_cache(key, grader=grader)
     if str(path).lower().endswith(".parquet"):
-        return pd.read_parquet(path)
-    return pd.read_csv(path)
+        df = pd.read_parquet(path)
+        if dtype is str:
+            df = df.astype(object).where(df.notna(), None)
+            df = df.apply(lambda col: col.map(lambda v: v if v is None else str(v)))
+        elif dtype is not None:
+            df = df.astype(dtype)
+        return df
+    fmt = detect_csv_format(path)
+    df = pd.read_csv(path, dtype=dtype, sep=fmt["delimiter"], encoding=fmt["encoding"])
+    if df.shape[1] == 1 and any(c in fmt["first_line"] for c in ";\t"):
+        fmt["flags"].append("suspect_wrong_delimiter")
+    df.attrs["csv_format"] = {"delimiter": fmt["delimiter"], "encoding": fmt["encoding"], "flags": fmt["flags"]}
+    return df
+
+
+def detect_csv_format(path):
+    """Nhan dien ma hoa (thu utf-8-sig, cp1258, latin-1) va dau phan cach (csv.Sniffer tren vai KB dau).
+
+    Tra ve dict: encoding, delimiter, first_line, flags. Khong doan duoc dau phan cach thi dung ",".
+    """
+    raw = Path(path).read_bytes()
+    for encoding in CSV_ENCODINGS:
+        try:
+            text = raw.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+    sample = text[:CSV_SNIFF_BYTES]
+    if len(text) > CSV_SNIFF_BYTES and "\n" in sample:
+        sample = sample[:sample.rfind("\n")]  # chi dung cac dong day du
+    first_line = sample.splitlines()[0] if sample else ""
+    try:
+        delimiter = csv.Sniffer().sniff(sample, delimiters=CSV_DELIMITERS).delimiter
+    except csv.Error:
+        delimiter = ","
+    return {"encoding": encoding, "delimiter": delimiter, "first_line": first_line, "flags": []}
 
 
 def _fmt_size(n):
