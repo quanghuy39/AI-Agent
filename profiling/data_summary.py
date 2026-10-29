@@ -184,9 +184,9 @@ def _definitions(report, t):
             if c["name"].strip().lower() in by_norm and c.get("definition")}
 
 
-def _column_line(col, info, opts, masked, is_key, definition, key_like=False):
+def _column_line(col, info, opts, masked, is_key, definition, key_like=False, valid_range=None):
     """key_like: cot khoa/noi bang (is_key_column). Phan pattern chi in khi cau truc chinh ro rang,
-    hoac cot khoa/noi bang, hoac cot bi che."""
+    hoac cot khoa/noi bang, hoac cot bi che. valid_range: (min, max) dang co hieu luc (range_checks)."""
     head = f"- {col}" + (" [masked]" if masked else "") + (" [key]" if is_key else "")
     kind = info["inferred_type"]
     if info.get("date_format"):
@@ -207,6 +207,8 @@ def _column_line(col, info, opts, masked, is_key, definition, key_like=False):
                 and info["n_unique"] <= config.TOP_VALUES_MAX_UNIQUE:
             shown = top if opts["top"] is None else top[:opts["top"]]
             parts.append("top " + ", ".join(f"{_cell(v['value'])} ({v['count']})" for v in shown))
+    if valid_range is not None:  # khai bao, khong phai gia tri du lieu: in ca voi cot bi che
+        parts.append(f"valid range {quality._fmt_bounds(*valid_range)}")
     clear = (info.get("pattern_dominant_ratio") or 0) >= 1 - config.MINORITY_PATTERN_RATIO
     if info.get("pattern_dominant") and (clear or key_like or masked):
         parts.append(f"pattern {info['pattern_dominant']} ({_pct(info['pattern_dominant_ratio'])}, "
@@ -337,12 +339,14 @@ def _render(report, masked, opts):
         defs = _definitions(report, t)
         masked_cols = {c for (tn, c) in masked if tn == name}
         dict_keys = fl.dict_key_columns(report, t)
+        valid_ranges = {r["column"]: (r["min"], r["max"]) for r in report.get("range_checks") or []
+                        if r["table"] == name}
         for col, info in t["columns"].items():
             is_key = col in (t.get("key_cols") or [])
             detail = opts["detail"] or is_key or col in flagged or info["inferred_type"] in ("date", "datetime")
             key_like = fl.is_key_column(t, col, dict_keys, config.KEY_NAME_HINTS)
             lines.append(_column_line(col, info, {**opts, "detail_col": detail}, col in masked_cols, is_key,
-                                      defs.get(col), key_like=key_like))
+                                      defs.get(col), key_like=key_like, valid_range=valid_ranges.get(col)))
         check = t.get("dictionary_check")
         if check and check["missing_in_data"] and not opts["minimal"]:
             lines.append("missing in data: " + ", ".join(

@@ -495,12 +495,43 @@ def resolve_table_column(spec, columns_by_table, what="ranges"):
     raise ValueError(f"{what}: không có bảng nào khớp {spec!r}. Các bảng: {list(columns_by_table)}")
 
 
-def _run_ranges(ranges, frames, max_examples):
-    out = []
+def _fmt_bounds(lo, hi):
+    if lo is not None and hi is not None:
+        return f"{lo}..{hi}"
+    return f">= {lo}" if lo is not None else f"<= {hi}"
+
+
+def _range_targets(ranges, frames, tables, dict_tables):
+    """Danh sach {table, column, min, max, source[, note]}: khoang hop le cua dictionary (cot co trong du lieu),
+    roi ranges (tham so) ghi de cot trung (source "argument", kem note)."""
+    targets = {}
+    for name, t in tables.items():
+        check = t.get("dictionary_check")
+        if not check or check["dictionary_table"] not in dict_tables:
+            continue
+        by_norm = {str(c).strip().lower(): str(c) for c in frames[name].columns}
+        for c in dict_tables[check["dictionary_table"]]["columns"]:
+            col = by_norm.get(c["name"].strip().lower())
+            if c.get("valid_range") and col is not None:  # cot thieu trong du lieu: da co dict_missing_column
+                targets[(name, col)] = {"table": name, "column": col, "min": c["valid_range"]["min"],
+                                        "max": c["valid_range"]["max"], "source": "dictionary"}
     for spec, (lo, hi) in ranges.items():
         table, col = resolve_table_column(spec, {n: f.columns for n, f in frames.items()})
-        result = range_check(frames[table][col], lo, hi, max_examples=max_examples, label=spec)
-        out.append({"table": table, "column": col, "min": lo, "max": hi, "result": result})
+        target = {"table": table, "column": col, "min": lo, "max": hi, "source": "argument", "label": spec}
+        old = targets.get((table, col))
+        if old is not None and old["source"] == "dictionary":
+            target["note"] = f"ghi đè khoảng của dictionary ({_fmt_bounds(old['min'], old['max'])})"
+        targets[(table, col)] = target
+    return list(targets.values())
+
+
+def _run_ranges(targets, frames, max_examples):
+    out = []
+    for target in targets:
+        label = target.pop("label", None) or f"{target['table']}.{target['column']}"
+        result = range_check(frames[target["table"]][target["column"]], target["min"], target["max"],
+                             max_examples=max_examples, label=label)
+        out.append({**target, "result": result})
     return out
 
 
@@ -583,7 +614,8 @@ def profile_problem(problem_id, include_samples=True, thresholds=None, ranges=No
         frames[name] = df
 
     max_examples = DEFAULT_MAX_EXAMPLES if include_samples else 0
-    range_checks = _run_ranges(ranges, frames, max_examples)  # ten sai -> ValueError truoc khi ghi
+    # khoang cua dictionary + ranges (ghi de); ten sai -> ValueError truoc khi ghi
+    range_checks = _run_ranges(_range_targets(ranges, frames, tables, dict_tables), frames, max_examples)
     rel = relationships.check_relationships(
         frames, {n: t["key_cols"] for n, t in tables.items()}, _fk_columns(tables, dict_tables),
         min_overlap=used_thresholds["RELATIONSHIP_MIN_OVERLAP"],

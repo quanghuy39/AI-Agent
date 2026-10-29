@@ -76,7 +76,8 @@ def test_parse_markdown():
     tables, warnings = dd.parse_dictionary_md(MD)
     assert list(tables) == ["Support Ticket", "Products"]
     cols = tables["Support Ticket"]["columns"]
-    assert cols[0] == {"name": "ticket_id", "type": "int", "key": "PK", "sensitive": False, "definition": "Mã ticket"}
+    assert cols[0] == {"name": "ticket_id", "type": "int", "key": "PK", "sensitive": False, "definition": "Mã ticket",
+                       "valid_range": None}
     assert cols[1]["type"] == "date" and cols[1]["key"] is None
     assert [c["name"] for c in cols] == ["ticket_id", "opened"]
     prod = tables["Products"]["columns"]
@@ -97,8 +98,10 @@ def test_parse_csv_vietnamese_headers():
                        "Kiểu": ["string (pk)", "Float", "int", "int"], "Dinh Nghia": ["Mã", None, "", "lặp"]})
     tables, warnings = dd.parse_dictionary_csv(df)
     cols = tables["ORDER"]["columns"]
-    assert cols == [{"name": "order_id", "type": "string", "key": "PK", "sensitive": False, "definition": "Mã"},
-                    {"name": "amount", "type": "float", "key": None, "sensitive": False, "definition": ""}]
+    assert cols == [{"name": "order_id", "type": "string", "key": "PK", "sensitive": False, "definition": "Mã",
+                     "valid_range": None},
+                    {"name": "amount", "type": "float", "key": None, "sensitive": False, "definition": "",
+                     "valid_range": None}]
     assert len(warnings) == 2  # dong thieu ten bang, cot lap
 
 

@@ -19,7 +19,12 @@ FIELD_ALIASES = {
     "column": ("column", "cot"),
     "type": ("type", "kieu"),
     "definition": ("definition", "dinhnghia"),
+    "valid_range": ("khoanghople", "validrange", "valid_range", "range"),  # tuy chon
 }
+# Khoang hop le: "a..b" (a <= b), ">= a", "<= b"; so nguyen hoac thuc, co the am.
+_NUM = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
+_RANGE_BETWEEN_RE = re.compile(rf"^({_NUM})\s*\.\.\s*({_NUM})$")
+_RANGE_BOUND_RE = re.compile(rf"^(>=|<=)\s*({_NUM})$")
 MD_REQUIRED = ("column", "type")
 CSV_REQUIRED = ("table", "column", "type")
 
@@ -95,14 +100,40 @@ def _split_type(raw):
     return type_, key, "SENSITIVE" in tags
 
 
-def _add_column(tables, table, name, raw_type, definition, warnings, where):
+def _number(text):
+    return int(text) if re.fullmatch(r"[+-]?\d+", text) else float(text)
+
+
+def parse_valid_range(text):
+    """Khoang hop le -> ({"min", "max"} | None, loi | None). O trong -> (None, None).
+    Nhan "a..b" (a <= b), ">= a", "<= b"; dang khac hoac a > b -> (None, mo ta loi)."""
+    s = re.sub(r"\s+", " ", "" if text is None else str(text)).strip()
+    if not s:
+        return None, None
+    m = _RANGE_BETWEEN_RE.match(s)
+    if m:
+        lo, hi = _number(m.group(1)), _number(m.group(2))
+        if lo > hi:
+            return None, f"khoảng '{s}' có cận dưới lớn hơn cận trên"
+        return {"min": lo, "max": hi}, None
+    m = _RANGE_BOUND_RE.match(s)
+    if m:
+        value = _number(m.group(2))
+        return ({"min": value, "max": None} if m.group(1) == ">=" else {"min": None, "max": value}), None
+    return None, f"khoảng '{s}' không đúng dạng a..b, >= a hoặc <= b"
+
+
+def _add_column(tables, table, name, raw_type, definition, warnings, where, raw_range=None):
     cols = tables.setdefault(table, {"columns": []})["columns"]
     if any(c["name"] == name for c in cols):
         warnings.append(f"{where}: cột '{name}' lặp lại trong bảng '{table}', giữ dòng đầu")
         return
     type_, key, sensitive = _split_type(raw_type)
+    valid_range, error = parse_valid_range(raw_range)
+    if error:
+        warnings.append(f"{where}: bảng '{table}', cột '{name}': {error}, bỏ qua khoảng")
     cols.append({"name": name, "type": type_, "key": key, "sensitive": sensitive,
-                 "definition": (definition or "").strip()})
+                 "definition": (definition or "").strip(), "valid_range": valid_range})
 
 
 def _md_cells(line):
@@ -116,7 +147,8 @@ def _md_cells(line):
 
 def parse_dictionary_md(text):
     """Markdown -> (tables, parse_warnings).
-    tables: {ten bang: {"columns": [{name, type, key, sensitive, definition}]}}."""
+    tables: {ten bang: {"columns": [{name, type, key, sensitive, definition, valid_range}]}}.
+    Cot thu 4 tuy chon "Khoang hop le" / "Valid range" / "Range"."""
     tables, warnings = {}, []
     table, header = None, None  # header: list truong theo vi tri, "bad" neu tieu de khong hop le
     for lineno, line in enumerate(text.splitlines(), start=1):
@@ -158,7 +190,8 @@ def parse_dictionary_md(text):
         if not name:
             warnings.append(f"Dòng {lineno}: bảng '{table}' có dòng thiếu tên cột, bỏ qua dòng")
             continue
-        _add_column(tables, table, name, row.get("type"), row.get("definition"), warnings, f"Dòng {lineno}")
+        _add_column(tables, table, name, row.get("type"), row.get("definition"), warnings, f"Dòng {lineno}",
+                    row.get("valid_range"))
     return tables, warnings
 
 
@@ -185,7 +218,7 @@ def parse_dictionary_csv(df):
         if not table or not name:
             warnings.append(f"{where}: thiếu tên bảng hoặc tên cột, bỏ qua dòng")
             continue
-        _add_column(tables, table, name, get("type"), get("definition"), warnings, where)
+        _add_column(tables, table, name, get("type"), get("definition"), warnings, where, get("valid_range"))
     return tables, warnings
 
 

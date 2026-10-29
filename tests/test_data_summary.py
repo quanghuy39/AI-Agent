@@ -33,7 +33,7 @@ def test_parser_sensitive_tag():
         ("string", "PK", True), ("text", None, True), ("int", "FK", False), ("string", None, False)]
     tables, _ = dd.parse_dictionary_csv(pd.DataFrame({"table": ["T"], "column": ["a"], "type": ["varchar(9) (SENSITIVE)"]}))
     assert tables["T"]["columns"][0] == {"name": "a", "type": "varchar(9)", "key": None, "sensitive": True,
-                                         "definition": ""}
+                                         "definition": "", "valid_range": None}
 
 
 # ---------- pii_like ----------
