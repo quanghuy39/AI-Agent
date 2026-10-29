@@ -71,6 +71,17 @@ NULL_RATIO_FLAG = 0.05
 # So dong thay doi qua ty le nay giua hai lan doc (dung o muc validators).
 ROW_COUNT_CHANGE_FLAG = 0.10
 
+# ---------- Validators (Ngay 4 muc 4) ----------
+# join_check: co khi ty le dong ben trai khong khop (khong tinh khoa null) > nguong nay.
+JOIN_UNMATCHED_FLAG_RATIO = 0.0
+# sum_consistency: sai so cho phep (math.isclose).
+SUM_REL_TOL = 1e-6
+SUM_ABS_TOL = 1e-9
+# range_check: co khi ty le gia tri ngoai khoang > nguong nay.
+RANGE_OUT_FLAG_RATIO = 0.0
+# Do quan he: cot con co it hon ty le nay gia tri xuat hien ben cha -> loai (ten trung nhung khong giao nhau).
+RELATIONSHIP_MIN_OVERLAP = 0.05
+
 
 def get_r2_settings():
     """Tra ve dict cau hinh R2; bao loi ro neu thieu bien."""

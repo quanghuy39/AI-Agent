@@ -10,7 +10,8 @@ from profiling import quality  # quality cung import module nay: chi dung qualit
 
 FLAG, INFO = "flag", "info"
 # Ten hang trong config.py ma build_flags doc; thresholds chi duoc ghi de cac khoa nay.
-THRESHOLD_KEYS = ("NULL_RATIO_FLAG", "MINORITY_PATTERN_RATIO", "KEY_NAME_HINTS")
+THRESHOLD_KEYS = ("NULL_RATIO_FLAG", "MINORITY_PATTERN_RATIO", "KEY_NAME_HINTS",
+                  "JOIN_UNMATCHED_FLAG_RATIO", "RELATIONSHIP_MIN_OVERLAP")
 DATE_COLUMN_FLAGS = {
     "mixed_date_formats": "trộn nhiều định dạng ngày",
     "ambiguous_day_month": "không phân biệt được ngày/tháng",
@@ -162,8 +163,56 @@ def _problem_flags(report):
     return out
 
 
+def _relationship_flags(report):
+    """Co tu relationship_checks, relationship_notes va range_checks (ket qua da tinh trong profile_problem)."""
+    out = []
+    for c in report.get("relationship_checks") or []:
+        child, ccol, parent, pcol = c["child"], c["child_col"], c["parent"], c["parent_col"]
+        link = f"{child}.{ccol} -> {parent}.{pcol}"
+        if c["status"] == "rejected":
+            ov = c["result"]["overlap"]
+            out.append(_flag("relationship_rejected", INFO, child, ccol,
+                             f"{link}: tên cột trùng nhưng giá trị không giao nhau (overlap {_pct(ov)}), bỏ qua",
+                             ov, c["result"]["min_overlap"]))
+            continue
+        d = c["result"]["details"]
+        if "right_duplicate_keys" in d["flags"]:
+            out.append(_flag("join_right_duplicate_keys", FLAG, parent, pcol,
+                             f"{parent}.{pcol}: {d['right_duplicate_keys']} khóa trùng, ghép từ {child}.{ccol} "
+                             f"tăng {d['extra_rows']} dòng", d["right_duplicate_keys"], 0))
+        if "unmatched" in d["flags"]:
+            out.append(_flag("join_unmatched", FLAG, child, ccol,
+                             f"{link}: {d['left_unmatched_raw']} dòng không khớp ({_pct(d['unmatched_ratio'])}), "
+                             f"{d['recoverable']} dòng khớp được nếu chuẩn hóa khóa",
+                             d["unmatched_ratio"], d["unmatched_threshold"]))
+        if d["key_type_mismatch"]:
+            types = ", ".join(f"{t['left']}/{t['right']}" for t in d["key_types"])
+            out.append(_flag("join_key_type_mismatch", FLAG, child, ccol, f"{link}: khác nhóm kiểu khóa ({types})"))
+        if d["right_unmatched"]:
+            out.append(_flag("join_right_unmatched", INFO, parent, pcol,
+                             f"{parent}.{pcol}: {d['right_unmatched']} dòng không có trong {child}.{ccol}",
+                             d["right_unmatched"]))
+    for n in report.get("relationship_notes") or []:
+        if n["code"] == "ambiguous_direction":
+            out.append(_flag("relationship_ambiguous_direction", INFO, n["table"], n["column"],
+                             f"{n['table']}.{n['column']} và {n['other_table']}.{n['other_column']}: cùng là khóa "
+                             f"ở hai bảng, không rõ hướng quan hệ"))
+        elif n["code"] == "fk_without_reference":
+            out.append(_flag("fk_without_reference", INFO, n["table"], n["column"],
+                             f"{n['table']}.{n['column']}: dictionary ghi FK nhưng không ghép được bảng nào"))
+    for r in report.get("range_checks") or []:
+        res = r["result"]
+        if res["status"] == "flag":
+            d = res["details"]
+            out.append(_flag("range_violation", FLAG, r["table"], r["column"], res["reason"],
+                             d["out_ratio"], [r["min"], r["max"]]))
+    return out
+
+
 def build_flags(report, thresholds=None):
-    """Sinh danh sach co tu bao cao profile_problem. thresholds: ghi de hang trong config.py (THRESHOLD_KEYS)."""
+    """Sinh danh sach co tu bao cao profile_problem. thresholds: ghi de hang trong config.py (THRESHOLD_KEYS).
+    Cac nguong cua quan he (JOIN_UNMATCHED_FLAG_RATIO, RELATIONSHIP_MIN_OVERLAP) da dung khi profile_problem
+    chay join_check; o day chi doc ket qua."""
     th = resolve_thresholds(thresholds)
     file_flags = {f["table"]: f.get("flags") or [] for f in report.get("files") or []}
     not_in_dict = set((report.get("dictionary") or {}).get("files_without_dictionary") or [])
@@ -173,7 +222,7 @@ def build_flags(report, thresholds=None):
         if name in not_in_dict:
             flags.append(_flag("not_in_dictionary", FLAG, name, None, f"{name}: file không có trong dictionary"))
         flags += _dictionary_flags(name, t)
-    return flags
+    return flags + _relationship_flags(report)
 
 
 def summarize_flags(flags, table_names):

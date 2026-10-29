@@ -20,8 +20,10 @@ import config
 from config import ROOT
 from ledger import Ledger
 from ledger.schema import now_iso
-from profiling import dictionary, flags
+from profiling import dictionary, flags, relationships
 from storage import r2
+from validators import range_check
+from validators.result import DEFAULT_MAX_EXAMPLES
 
 OUTPUT_DIR = ROOT / "output"
 REPORT_KEY = "data_quality_report"
@@ -432,12 +434,66 @@ def _load_dictionary(objects):
     return info, set(found["dictionary_keys"])
 
 
-def profile_problem(problem_id, include_samples=True, thresholds=None):
+def _check_ranges_shape(ranges):
+    """{"BANG.cot": (min, max)} -> dict; sai dang -> ValueError (truoc khi doc R2)."""
+    out = {}
+    for spec, bounds in (ranges or {}).items():
+        if not isinstance(spec, str) or "." not in spec:
+            raise ValueError(f"ranges: khóa phải có dạng BANG.cot, nhận được {spec!r}")
+        try:
+            lo, hi = bounds
+        except (TypeError, ValueError):
+            raise ValueError(f"ranges[{spec!r}] phải là (min, max), nhận được {bounds!r}") from None
+        if lo is None and hi is None:
+            raise ValueError(f"ranges[{spec!r}]: cần ít nhất một cận")
+        out[spec] = (lo, hi)
+    return out
+
+
+def _resolve_range_target(spec, frames):
+    """"BANG.cot" -> (bang, cot). Ten bang khop tien to dai nhat (ten cot co the chua dau cham)."""
+    for table in sorted(frames, key=len, reverse=True):
+        if spec.startswith(f"{table}."):
+            col = spec[len(table) + 1:]
+            if col not in frames[table].columns:
+                raise ValueError(f"ranges: bảng {table} không có cột {col!r}. Các cột: {list(frames[table].columns)}")
+            return table, col
+    raise ValueError(f"ranges: không có bảng nào khớp {spec!r}. Các bảng: {list(frames)}")
+
+
+def _run_ranges(ranges, frames, max_examples):
+    out = []
+    for spec, (lo, hi) in ranges.items():
+        table, col = _resolve_range_target(spec, frames)
+        result = range_check(frames[table][col], lo, hi, max_examples=max_examples, label=spec)
+        out.append({"table": table, "column": col, "min": lo, "max": hi, "result": result})
+    return out
+
+
+def _fk_columns(tables, dict_tables):
+    """{bang: [cot that trong du lieu duoc dictionary danh dau FK]}."""
+    out = {}
+    for name, t in tables.items():
+        check = t.get("dictionary_check")
+        if not check or check["dictionary_table"] not in dict_tables:
+            continue
+        by_norm = {c.strip().lower(): c for c in t["columns"]}
+        cols = [by_norm[c["name"].strip().lower()] for c in dict_tables[check["dictionary_table"]]["columns"]
+                if c["key"] == "FK" and c["name"].strip().lower() in by_norm]
+        if cols:
+            out[name] = cols
+    return out
+
+
+def profile_problem(problem_id, include_samples=True, thresholds=None, ranges=None):
     """Profile moi bang .csv/.parquet trong input/<problem_id>/, ghi vao output/<problem_id>/data_profile.json.
     Co data dictionary thi doc truoc, dung PK cua no lam khoa va doi chieu tung bang (khoa "dictionary_check").
-    Sau cung sinh co theo nguong (profiling.flags; thresholds ghi de hang trong config.py)."""
+    Sau do do quan he giua cac bang (relationship_checks), kiem khoang gia tri theo ranges
+    ({"BANG.cot": (min, max)}, min/max co the None) va sinh co theo nguong (profiling.flags;
+    thresholds ghi de hang trong config.py)."""
     _check_problem_id(problem_id)
     used_thresholds = flags.resolve_thresholds(thresholds)  # khoa sai thi bao loi truoc khi doc R2
+    ranges = _check_ranges_shape(ranges)
     prefix = f"{r2.get_r2_settings()['R2_INPUT_PREFIX']}{problem_id}/"
     objects = r2.list_objects(prefix)
     dict_info, dict_keys = _load_dictionary(objects)
@@ -456,6 +512,7 @@ def profile_problem(problem_id, include_samples=True, thresholds=None):
         dict_info["files_without_dictionary"] = matching["files_without_dictionary"]
 
     files, skipped, errors, tables = [], [], [], {}
+    frames = {}  # giu DataFrame trong bo nho de do quan he va kiem khoang gia tri
     for obj in objects:
         key = obj["key"]
         if key in dict_keys:
@@ -489,6 +546,14 @@ def profile_problem(problem_id, include_samples=True, thresholds=None):
         elif name in dict_info["files_without_dictionary"]:
             t["flags"].append("dictionary: not_in_dictionary")
         tables[name] = t
+        frames[name] = df
+
+    max_examples = DEFAULT_MAX_EXAMPLES if include_samples else 0
+    range_checks = _run_ranges(ranges, frames, max_examples)  # ten sai -> ValueError truoc khi ghi
+    rel = relationships.check_relationships(
+        frames, {n: t["key_cols"] for n, t in tables.items()}, _fk_columns(tables, dict_tables),
+        min_overlap=used_thresholds["RELATIONSHIP_MIN_OVERLAP"],
+        unmatched_threshold=used_thresholds["JOIN_UNMATCHED_FLAG_RATIO"], max_examples=max_examples)
 
     report = {
         "problem_id": problem_id,
@@ -498,6 +563,9 @@ def profile_problem(problem_id, include_samples=True, thresholds=None):
         "skipped": skipped,
         "errors": errors,
         "tables": tables,
+        "relationship_checks": rel["checks"],
+        "relationship_notes": rel["notes"],
+        "range_checks": range_checks,
     }
     all_flags = flags.build_flags(report, used_thresholds)
     for name, t in tables.items():
@@ -645,6 +713,11 @@ def format_summary(report):
     if report.get("quality_flags"):
         lines += _fmt_quality_flags(report["quality_flags"], indent="")
     lines += [_fmt_table(t) for t in report["tables"].values()]
+    lines += _fmt_relationships(report.get("relationship_checks") or [], report.get("relationship_notes") or [])
+    if report.get("range_checks"):
+        lines.append("Khoảng giá trị:")
+        lines += [f"  {r['result']['reason']}" if r["result"]["status"] == "flag"
+                  else f"  {r['table']}.{r['column']}: đạt" for r in report["range_checks"]]
     for s in report["skipped"]:
         lines.append(f"Bỏ qua {s['key']}: {s['reason']}")
     for e in report["errors"]:
@@ -656,6 +729,58 @@ def format_summary(report):
     return "\n".join(lines)
 
 
+def _fmt_relationships(checks, notes):
+    if not checks and not notes:
+        return []
+    lines = ["Quan hệ giữa các bảng:"]
+    for c in checks:
+        head = f"  {c['child']}.{c['child_col']} -> {c['parent']}.{c['parent_col']}: "
+        if c["status"] == "rejected":
+            lines.append(head + f"bị loại (overlap {c['result']['overlap']:.1%})")
+            continue
+        d = c["result"]["details"]
+        parts = []
+        if d["left_unmatched_raw"]:
+            parts.append(f"{d['left_unmatched_raw']} dòng không khớp ({d['unmatched_ratio']:.1%}), "
+                         f"{d['recoverable']} khớp được nếu chuẩn hóa")
+        if d["right_duplicate_keys"]:
+            parts.append(f"{d['right_duplicate_keys']} khóa trùng bên {c['parent']} (+{d['extra_rows']} dòng)")
+        if d["key_type_mismatch"]:
+            parts.append("kiểu khóa khác nhau")
+        lines.append(head + ("; ".join(parts) if parts else "khớp hết"))
+    for n in notes:
+        if n["code"] == "ambiguous_direction":
+            lines.append(f"  {n['table']}.{n['column']} <-> {n['other_table']}.{n['other_column']}: "
+                         f"cùng là khóa ở hai bảng, không rõ hướng (bỏ qua)")
+        elif n["code"] == "fk_without_reference":
+            lines.append(f"  {n['table']}.{n['column']}: dictionary ghi FK nhưng không ghép được bảng nào")
+    return lines
+
+
+def _parse_range(item):
+    """"BANG.cot=MIN:MAX" (MIN hoac MAX co the rong) -> (spec, (min, max))."""
+    spec, sep, bounds = item.partition("=")
+    lo, colon, hi = bounds.partition(":")
+    if not sep or not colon or not spec.strip():
+        raise ValueError(f"--range cần dạng BANG.cot=MIN:MAX, nhận được {item!r}")
+    values = []
+    for raw in (lo.strip(), hi.strip()):
+        values.append(None if raw == "" else _to_number(raw, f"--range {spec}"))
+    if values == [None, None]:
+        raise ValueError(f"--range {spec}: cần ít nhất MIN hoặc MAX")
+    return spec.strip(), tuple(values)
+
+
+def _to_number(raw, where):
+    try:
+        return int(raw)
+    except ValueError:
+        try:
+            return float(raw)
+        except ValueError:
+            raise ValueError(f"{where}: giá trị {raw!r} không phải số") from None
+
+
 def _parse_set(items):
     """["TEN=GIATRI", ...] -> dict; gia tri doi sang int, khong duoc thi float."""
     out = {}
@@ -663,14 +788,7 @@ def _parse_set(items):
         name, sep, raw = item.partition("=")
         if not sep or not name.strip():
             raise ValueError(f"--set cần dạng TEN=GIATRI, nhận được {item!r}")
-        try:
-            value = int(raw)
-        except ValueError:
-            try:
-                value = float(raw)
-            except ValueError:
-                raise ValueError(f"--set {name}: giá trị {raw!r} không phải số") from None
-        out[name.strip()] = value
+        out[name.strip()] = _to_number(raw, f"--set {name}")
     return out
 
 
@@ -680,13 +798,17 @@ def main(argv=None):
     p.add_argument("--no-samples", action="store_true", help="không ghi sample_records và top_values")
     p.add_argument("--set", action="append", default=[], metavar="TEN=GIATRI",
                    help="ghi đè ngưỡng trong config.py, vd. --set NULL_RATIO_FLAG=0.01 (dùng nhiều lần được)")
+    p.add_argument("--range", action="append", default=[], metavar="BANG.COT=MIN:MAX",
+                   help="kiểm khoảng giá trị, vd. --range SURVEY.csat_score=1:5 (MIN hoặc MAX có thể rỗng)")
     args = p.parse_args(argv)
     try:
         thresholds = _parse_set(args.set)
         flags.resolve_thresholds(thresholds)
+        ranges = dict(_parse_range(r) for r in args.range)
     except ValueError as e:
         p.error(str(e))
-    report = profile_problem(args.problem_id, include_samples=not args.no_samples, thresholds=thresholds)
+    report = profile_problem(args.problem_id, include_samples=not args.no_samples, thresholds=thresholds,
+                             ranges=ranges)
     print(format_summary(report))
     print(f"\nĐã ghi {OUTPUT_DIR / args.problem_id / 'data_profile.json'} (khóa {REPORT_KEY}).")
     return 0
