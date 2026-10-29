@@ -82,6 +82,14 @@ RANGE_OUT_FLAG_RATIO = 0.0
 # Do quan he: cot con co it hon ty le nay gia tri xuat hien ben cha -> loai (ten trung nhung khong giao nhau).
 RELATIONSHIP_MIN_OVERLAP = 0.05
 
+# ---------- Tom tat du lieu cho AI (Ngay 4 muc 5) ----------
+SUMMARY_MAX_CHARS = 8000            # ngan sach ky tu cua ban tom tat
+SUMMARY_SAMPLE_N = 3                # so ban ghi mau moi bang
+SUMMARY_CELL_MAX_CHARS = 30         # moi o (ban ghi mau, top values) cat con chung nay ky tu
+SUMMARY_DEFINITION_MAX_CHARS = 120  # dinh nghia dictionary cat con chung nay ky tu
+# Cot string/integer co ty le gia tri giong email/so dien thoai >= nguong nay -> tu dong che (kem canh bao).
+SENSITIVE_AUTO_RATIO = 0.30
+
 
 def get_r2_settings():
     """Tra ve dict cau hinh R2; bao loi ro neu thieu bien."""

@@ -33,7 +33,9 @@ TYPE_RULES = {
     "string": None, "text": None, "varchar": None,
 }
 
-_KEY_RE = re.compile(r"\(\s*((?:pk|fk)(?:\s*[,/ ]\s*(?:pk|fk))*)\s*\)", re.IGNORECASE)
+# The trong ngoac o cot Kieu: (PK), (FK), (SENSITIVE), ket hop duoc: (PK, SENSITIVE)
+_TAG = r"(?:pk|fk|sensitive)"
+_KEY_RE = re.compile(rf"\(\s*({_TAG}(?:\s*[,/ ]\s*{_TAG})*)\s*\)", re.IGNORECASE)
 _SEPARATOR_CELL_RE = re.compile(r"^:?-+:?$")
 _HEADING_RE = re.compile(r"^\s*##(?!#)\s*(.*?)\s*#*\s*$")
 _TEXT_DATE_RE = re.compile(r"(?<![a-z])(dd|mm|yyyy)([-/.])(dd|mm|yyyy)\2(dd|mm|yyyy)(?![a-z])", re.IGNORECASE)
@@ -84,12 +86,13 @@ def _field_of(header):
 
 
 def _split_type(raw):
-    """Tach "(PK)"/"(FK)" khoi kieu. Tra ve (type chu thuong, key). Co ca PK va FK -> "PK"."""
+    """Tach "(PK)"/"(FK)"/"(SENSITIVE)" khoi kieu. Tra ve (type chu thuong, key, sensitive).
+    Co ca PK va FK -> "PK"."""
     raw = "" if raw is None else str(raw)
-    tags = {t.upper() for m in _KEY_RE.finditer(raw) for t in re.findall(r"pk|fk", m.group(1), re.IGNORECASE)}
+    tags = {t.upper() for m in _KEY_RE.finditer(raw) for t in re.findall(_TAG, m.group(1), re.IGNORECASE)}
     type_ = re.sub(r"\s+", " ", _KEY_RE.sub(" ", raw)).strip().lower()
     key = "PK" if "PK" in tags else "FK" if "FK" in tags else None
-    return type_, key
+    return type_, key, "SENSITIVE" in tags
 
 
 def _add_column(tables, table, name, raw_type, definition, warnings, where):
@@ -97,8 +100,9 @@ def _add_column(tables, table, name, raw_type, definition, warnings, where):
     if any(c["name"] == name for c in cols):
         warnings.append(f"{where}: cột '{name}' lặp lại trong bảng '{table}', giữ dòng đầu")
         return
-    type_, key = _split_type(raw_type)
-    cols.append({"name": name, "type": type_, "key": key, "definition": (definition or "").strip()})
+    type_, key, sensitive = _split_type(raw_type)
+    cols.append({"name": name, "type": type_, "key": key, "sensitive": sensitive,
+                 "definition": (definition or "").strip()})
 
 
 def _md_cells(line):
@@ -111,7 +115,8 @@ def _md_cells(line):
 
 
 def parse_dictionary_md(text):
-    """Markdown -> (tables, parse_warnings). tables: {ten bang: {"columns": [{name, type, key, definition}]}}."""
+    """Markdown -> (tables, parse_warnings).
+    tables: {ten bang: {"columns": [{name, type, key, sensitive, definition}]}}."""
     tables, warnings = {}, []
     table, header = None, None  # header: list truong theo vi tri, "bad" neu tieu de khong hop le
     for lineno, line in enumerate(text.splitlines(), start=1):

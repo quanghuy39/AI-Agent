@@ -326,6 +326,36 @@ def _guess_key(df, columns):
     return ([candidates[0][3]] if candidates else None), listed
 
 
+_EMAIL_RE = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+_PHONE_SEP_RE = r"[\s\-.()]"
+_PHONE_RE = r"^\+?\d{9,15}$"
+
+
+def _pii_like(series, check_phone):
+    """Ty le gia tri khac null (da strip) giong email / so dien thoai. Tinh tren gia tri khac nhau kem trong so.
+    Phone: bo [\\s\\-.()] con "+"(tuy chon) + 9-15 chu so, VA bat dau bang "+"/"0" hoac chuoi goc co dau phan cach
+    (tranh nhan nham so tien 1500000000). "4.0" kieu integer_stored_as_float duoc bo duoi ".0" truoc.
+    check_phone=False (cot khoa/noi bang): phone_ratio = None."""
+    vc = series.dropna().astype(str).str.strip().value_counts()
+    n = int(vc.sum())
+    if not n:
+        return {"email_ratio": 0.0, "phone_ratio": 0.0 if check_phone else None}
+    uniq = pd.Series(vc.index.astype(str), index=range(len(vc)))
+    weights = pd.Series(vc.to_numpy(), index=uniq.index)
+    out = {"email_ratio": round(float(weights[uniq.str.fullmatch(_EMAIL_RE)].sum() / n), 4), "phone_ratio": None}
+    if check_phone:
+        uniq = uniq.str.replace(r"^(\d+)\.0+$", r"\1", regex=True)
+        compact = uniq.str.replace(_PHONE_SEP_RE, "", regex=True)
+        phone = compact.str.fullmatch(_PHONE_RE) & (compact.str.match(r"[+0]") | uniq.str.contains(_PHONE_SEP_RE))
+        out["phone_ratio"] = round(float(weights[phone].sum() / n), 4)
+    return out
+
+
+def _key_like(col, key_cols):
+    hints = {h.lower() for h in config.KEY_NAME_HINTS}
+    return col in (key_cols or []) or any(w in hints for w in name_words(col))
+
+
 def _key_stats(df, key_cols):
     keys = df[key_cols]
     has_key = keys.notna().all(axis=1)
@@ -360,6 +390,8 @@ def profile_table(df, table_name, key_cols=None, sample_n=5, seed=42, include_sa
             "n_unique": int(s.nunique(dropna=True)),
         }
         info.update(infer_column(s, include_samples=include_samples))
+        if info["inferred_type"] in ("string", "integer"):  # so dien thoai chi gom chu so suy ra integer
+            info["pii_like"] = _pii_like(s, check_phone=not _key_like(col, key_cols))
         if include_samples:
             info["top_values"] = _top_values(s.dropna())
         columns[str(col)] = info
@@ -450,21 +482,23 @@ def _check_ranges_shape(ranges):
     return out
 
 
-def _resolve_range_target(spec, frames):
-    """"BANG.cot" -> (bang, cot). Ten bang khop tien to dai nhat (ten cot co the chua dau cham)."""
-    for table in sorted(frames, key=len, reverse=True):
+def resolve_table_column(spec, columns_by_table, what="ranges"):
+    """"BANG.cot" -> (bang, cot). columns_by_table: {bang: cac ten cot}. Ten bang khop tien to dai nhat
+    (ten cot co the chua dau cham). Khong co bang/cot -> ValueError."""
+    for table in sorted(columns_by_table, key=len, reverse=True):
         if spec.startswith(f"{table}."):
             col = spec[len(table) + 1:]
-            if col not in frames[table].columns:
-                raise ValueError(f"ranges: bảng {table} không có cột {col!r}. Các cột: {list(frames[table].columns)}")
+            cols = [str(c) for c in columns_by_table[table]]
+            if col not in cols:
+                raise ValueError(f"{what}: bảng {table} không có cột {col!r}. Các cột: {cols}")
             return table, col
-    raise ValueError(f"ranges: không có bảng nào khớp {spec!r}. Các bảng: {list(frames)}")
+    raise ValueError(f"{what}: không có bảng nào khớp {spec!r}. Các bảng: {list(columns_by_table)}")
 
 
 def _run_ranges(ranges, frames, max_examples):
     out = []
     for spec, (lo, hi) in ranges.items():
-        table, col = _resolve_range_target(spec, frames)
+        table, col = resolve_table_column(spec, {n: f.columns for n, f in frames.items()})
         result = range_check(frames[table][col], lo, hi, max_examples=max_examples, label=spec)
         out.append({"table": table, "column": col, "min": lo, "max": hi, "result": result})
     return out

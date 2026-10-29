@@ -37,7 +37,7 @@ def _pct(x):
     return f"{x:.1%}"
 
 
-def _dict_key_columns(report, table_report):
+def dict_key_columns(report, table_report):
     """Ten cot (chuan hoa) co PK/FK trong bang dictionary da ghep voi bang nay."""
     check = table_report.get("dictionary_check")
     tables = (report.get("dictionary") or {}).get("tables") or {}
@@ -46,15 +46,15 @@ def _dict_key_columns(report, table_report):
     return {c["name"].strip().lower() for c in tables[check["dictionary_table"]]["columns"] if c.get("key")}
 
 
-def is_key_column(table_report, column, dict_key_columns, hints):
+def is_key_column(table_report, column, dict_keys, hints):
     """Cot khoa/noi bang: PK/FK trong dictionary, nam trong key_cols, hoac ten co tu thuoc hints."""
-    if column.strip().lower() in dict_key_columns or column in (table_report.get("key_cols") or []):
+    if column.strip().lower() in dict_keys or column in (table_report.get("key_cols") or []):
         return True
     words = set(quality.name_words(column))
     return any(h.lower() in words for h in hints)
 
 
-def _table_flags(name, t, file_flags, dict_key_columns, th):
+def _table_flags(name, t, file_flags, dict_keys, th):
     out = []
     add = out.append
     if t["n_rows"] == 0:
@@ -77,7 +77,7 @@ def _table_flags(name, t, file_flags, dict_key_columns, th):
 
     for col, i in t["columns"].items():
         where = f"{name}.{col}"
-        key = is_key_column(t, col, dict_key_columns, th["KEY_NAME_HINTS"])
+        key = is_key_column(t, col, dict_keys, th["KEY_NAME_HINTS"])
         kind = "cột khóa" if key else "cột"
         sev = FLAG if key else INFO
 
@@ -218,7 +218,7 @@ def build_flags(report, thresholds=None):
     not_in_dict = set((report.get("dictionary") or {}).get("files_without_dictionary") or [])
     flags = _problem_flags(report)
     for name, t in report["tables"].items():
-        flags += _table_flags(name, t, file_flags.get(name, []), _dict_key_columns(report, t), th)
+        flags += _table_flags(name, t, file_flags.get(name, []), dict_key_columns(report, t), th)
         if name in not_in_dict:
             flags.append(_flag("not_in_dictionary", FLAG, name, None, f"{name}: file không có trong dictionary"))
         flags += _dictionary_flags(name, t)
