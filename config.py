@@ -63,6 +63,9 @@ KEY_MIN_UNIQUE_RATIO = 0.9
 # Tom tat profiling: cot co cau truc chinh chiem >= 1 - ty le nay va con gia tri lech cau truc
 # duoc in o dong "cau truc thieu so" (cot von da dang thi khong in).
 MINORITY_PATTERN_RATIO = 0.05
+# Doi chieu data dictionary: dinh nghia chua mot trong cac tu nay (khong phan biet hoa thuong)
+# -> cot thieu trong du lieu duoc ghi chu derived_hint (cot phai tu tinh).
+DERIVED_HINTS = ["derived", "not present", "calculated", "computed"]
 
 
 def get_r2_settings():

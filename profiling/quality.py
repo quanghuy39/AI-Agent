@@ -20,6 +20,7 @@ import config
 from config import ROOT
 from ledger import Ledger
 from ledger.schema import now_iso
+from profiling import dictionary
 from storage import r2
 
 OUTPUT_DIR = ROOT / "output"
@@ -401,23 +402,69 @@ def _is_answers(key):
     return any(part.lower() == "answers" for part in Path(key).parts)
 
 
+def _read_text(key):
+    raw = Path(r2.download_with_cache(key)).read_bytes()
+    for encoding in r2.CSV_ENCODINGS:
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("latin-1", errors="replace")
+
+
+def _load_dictionary(objects):
+    """Tim va doc dictionary. Tra ve (thong tin cap bai, cac key khong profile nhu bang du lieu)."""
+    found = dictionary.find_dictionary([o["key"] for o in objects])
+    info = {"file": found["key"], "format": found["format"], "status": found["status"],
+            "tables_without_file": [], "files_without_dictionary": [],
+            "parse_warnings": list(found["warnings"]), "tables": {}}
+    if found["status"] == "ok":
+        try:
+            if found["format"] == "md":
+                tables, warnings = dictionary.parse_dictionary_md(_read_text(found["key"]))
+            else:
+                tables, warnings = dictionary.parse_dictionary_csv(r2.read_table(found["key"], dtype=str))
+            info["tables"] = tables
+            info["parse_warnings"] += warnings
+        except Exception as e:  # noqa: BLE001  dictionary loi khong dung ca bai
+            info["status"] = "error"
+            info["parse_warnings"].append(f"{type(e).__name__}: {e}")
+    return info, set(found["dictionary_keys"])
+
+
 def profile_problem(problem_id, include_samples=True):
-    """Profile moi bang .csv/.parquet trong input/<problem_id>/, ghi vao output/<problem_id>/data_profile.json."""
+    """Profile moi bang .csv/.parquet trong input/<problem_id>/, ghi vao output/<problem_id>/data_profile.json.
+    Co data dictionary thi doc truoc, dung PK cua no lam khoa va doi chieu tung bang (khoa "dictionary_check")."""
     _check_problem_id(problem_id)
     prefix = f"{r2.get_r2_settings()['R2_INPUT_PREFIX']}{problem_id}/"
+    objects = r2.list_objects(prefix)
+    dict_info, dict_keys = _load_dictionary(objects)
+    dict_tables = dict_info["tables"]
+    table_names = {}  # key -> ten bang; tinh truoc khi profile de ghep voi dictionary
+    for obj in objects:
+        key = obj["key"]
+        if key not in dict_keys and not _is_answers(key) and key.lower().endswith(TABLE_EXTS):
+            name = Path(key).stem
+            table_names[key] = Path(key).name if name in table_names.values() else name
+    matching = dictionary.match_tables(list(dict_tables), list(table_names.values()))
+    dict_of_file = {f: d for d, f in matching["matched"]}
+    dict_info["parse_warnings"] += matching["warnings"]
+    if dict_tables:
+        dict_info["tables_without_file"] = matching["tables_without_file"]
+        dict_info["files_without_dictionary"] = matching["files_without_dictionary"]
 
     files, skipped, errors, tables = [], [], [], {}
-    for obj in r2.list_objects(prefix):
+    for obj in objects:
         key = obj["key"]
+        if key in dict_keys:
+            continue  # file dictionary: ghi o report["dictionary"], khong bao "bo qua"
         if _is_answers(key):
             skipped.append({"key": key, "reason": "answers/ bị cấm đọc"})
             continue
         if not key.lower().endswith(TABLE_EXTS):
             skipped.append({"key": key, "reason": "không phải .csv/.parquet"})
             continue
-        name = Path(key).stem
-        if name in tables:
-            name = Path(key).name
+        name = table_names[key]
         try:
             df = r2.read_table(key, dtype=str)
         except Exception as e:  # noqa: BLE001  ghi loi tung file, profile tiep cac file khac
@@ -427,12 +474,24 @@ def profile_problem(problem_id, include_samples=True):
         fmt = df.attrs.get("csv_format") or {}
         files.append({"key": key, "etag": etag, "table": name, "delimiter": fmt.get("delimiter"),
                       "encoding": fmt.get("encoding"), "flags": list(fmt.get("flags", []))})
-        tables[name] = profile_table(df, name, include_samples=include_samples)
-        tables[name]["flags"] += [f"file: {f}" for f in fmt.get("flags", [])]
+        dict_name = dict_of_file.get(name)
+        key_cols = None
+        if dict_name is not None:
+            key_cols, _ = dictionary.dictionary_key_cols(dict_tables[dict_name], [str(c) for c in df.columns])
+        t = profile_table(df, name, key_cols=key_cols, include_samples=include_samples)
+        t["key_source"] = "dictionary" if key_cols else "guessed" if t["key_guessed"] else None
+        t["flags"] += [f"file: {f}" for f in fmt.get("flags", [])]
+        if dict_name is not None:
+            t["dictionary_check"] = dictionary.compare_table_with_dictionary(t, dict_tables[dict_name], dict_name)
+            t["flags"] += [f"dictionary: {f}" for f in t["dictionary_check"]["flags"]]
+        elif name in dict_info["files_without_dictionary"]:
+            t["flags"].append("dictionary: not_in_dictionary")
+        tables[name] = t
 
     report = {
         "problem_id": problem_id,
         "generated_at": now_iso(),
+        "dictionary": dict_info,
         "files": files,
         "skipped": skipped,
         "errors": errors,
@@ -499,8 +558,53 @@ def _fmt_table(t):
     notes = [f"{c}: {n}" for c, i in t["columns"].items() for n in i["notes"]]
     if notes:
         lines.append(f"  Ghi chú: {', '.join(notes)}")
+    if t.get("dictionary_check"):
+        lines += _fmt_dictionary_check(t)
     lines.append(f"  Cờ: {', '.join(t['flags']) or 'không'}")
     return "\n".join(lines)
+
+
+def _fmt_dictionary_check(t):
+    d = t["dictionary_check"]
+    lines = [f"  Đối chiếu dictionary (bảng '{d['dictionary_table']}'):"]
+    sub = []
+    _add(sub, "Thiếu trong dữ liệu", [m["column"] + (" (dictionary nói là cột phải tính)" if m["derived_hint"] else "")
+                                      for m in d["missing_in_data"]])
+    _add(sub, "Thiếu trong dictionary", d["undocumented_in_dictionary"])
+    _add(sub, "Kiểu không khớp", [f"{m['column']} (dictionary {m['dictionary_type']}, dữ liệu {m['inferred_type']})"
+                                  for m in d["type_mismatches"]])
+    _add(sub, "Định dạng ngày lệch", [f"{m['column']} (dictionary {m['dictionary_format']}, "
+                                      f"dữ liệu {m['data_format']})" for m in d["date_format_mismatches"]])
+    _add(sub, "Kiểu dictionary không nhận ra", d["notes"])
+    if t["key_source"] == "dictionary":
+        source = f"dictionary ({', '.join(t['key_cols'])})"
+    else:
+        source = "đoán" if t["key_source"] == "guessed" else "không có"
+        if d["pk_missing"]:
+            source += f"; PK trong dictionary thiếu trong dữ liệu: {', '.join(d['pk_missing'])}"
+        elif not d["pk_cols"]:
+            source += "; dictionary không ghi PK"
+    sub.append(f"  Khóa lấy từ: {source}")
+    return lines + ["  " + s for s in sub]
+
+
+def _fmt_dictionary(d):
+    if d is None:
+        return []
+    if d["status"] == "none":
+        lines = ["Dictionary: không có"]
+    elif d["status"] == "unsupported":
+        lines = [f"Dictionary: không hỗ trợ định dạng file {d['file']} (chỉ đọc .md/.csv)"]
+    elif d["status"] == "error":
+        lines = [f"Dictionary: LỖI đọc {d['file']}"]
+    else:
+        lines = [f"Dictionary: {d['file']} ({d['format']}, {len(d['tables'])} bảng)"]
+    _add(lines, "Bảng trong dictionary không có file", d["tables_without_file"])
+    _add(lines, "File không có trong dictionary", d["files_without_dictionary"])
+    if d["parse_warnings"]:
+        lines.append(f"  Cảnh báo khi đọc dictionary ({len(d['parse_warnings'])}):")
+        lines += [f"    - {w}" for w in d["parse_warnings"]]
+    return lines
 
 
 def _num(v):
@@ -517,6 +621,7 @@ def _add(lines, label, items, sep=", "):
 
 def format_summary(report):
     lines = [f"Bài {report['problem_id']} ({report['generated_at']}): {len(report['tables'])} bảng"]
+    lines += _fmt_dictionary(report.get("dictionary"))
     lines += [_fmt_table(t) for t in report["tables"].values()]
     for s in report["skipped"]:
         lines.append(f"Bỏ qua {s['key']}: {s['reason']}")
