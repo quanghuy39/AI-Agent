@@ -66,6 +66,10 @@ MINORITY_PATTERN_RATIO = 0.05
 # Doi chieu data dictionary: dinh nghia chua mot trong cac tu nay (khong phan biet hoa thuong)
 # -> cot thieu trong du lieu duoc ghi chu derived_hint (cot phai tu tinh).
 DERIVED_HINTS = ["derived", "not present", "calculated", "computed"]
+# Co theo nguong: cot co ty le null >= nguong nay la "flag", duoi nguong (nhung > 0) la "info".
+NULL_RATIO_FLAG = 0.05
+# So dong thay doi qua ty le nay giua hai lan doc (dung o muc validators).
+ROW_COUNT_CHANGE_FLAG = 0.10
 
 
 def get_r2_settings():

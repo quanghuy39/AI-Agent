@@ -20,7 +20,7 @@ import config
 from config import ROOT
 from ledger import Ledger
 from ledger.schema import now_iso
-from profiling import dictionary
+from profiling import dictionary, flags
 from storage import r2
 
 OUTPUT_DIR = ROOT / "output"
@@ -432,10 +432,12 @@ def _load_dictionary(objects):
     return info, set(found["dictionary_keys"])
 
 
-def profile_problem(problem_id, include_samples=True):
+def profile_problem(problem_id, include_samples=True, thresholds=None):
     """Profile moi bang .csv/.parquet trong input/<problem_id>/, ghi vao output/<problem_id>/data_profile.json.
-    Co data dictionary thi doc truoc, dung PK cua no lam khoa va doi chieu tung bang (khoa "dictionary_check")."""
+    Co data dictionary thi doc truoc, dung PK cua no lam khoa va doi chieu tung bang (khoa "dictionary_check").
+    Sau cung sinh co theo nguong (profiling.flags; thresholds ghi de hang trong config.py)."""
     _check_problem_id(problem_id)
+    used_thresholds = flags.resolve_thresholds(thresholds)  # khoa sai thi bao loi truoc khi doc R2
     prefix = f"{r2.get_r2_settings()['R2_INPUT_PREFIX']}{problem_id}/"
     objects = r2.list_objects(prefix)
     dict_info, dict_keys = _load_dictionary(objects)
@@ -497,11 +499,20 @@ def profile_problem(problem_id, include_samples=True):
         "errors": errors,
         "tables": tables,
     }
+    all_flags = flags.build_flags(report, used_thresholds)
+    for name, t in tables.items():
+        t["quality_flags"] = [f for f in all_flags if f["table"] == name]
+    report["quality_flags"] = [f for f in all_flags if f["table"] not in tables]  # cap bai
+    report["quality_flags_summary"] = flags.summarize_flags(all_flags, list(tables))
+
     led = Ledger(OUTPUT_DIR / problem_id)
     profile = led.get_data_profile()
     profile = profile if isinstance(profile, dict) else {}
     profile[REPORT_KEY] = report
     led.set_data_profile(profile)
+    # chi so dem, khong kem gia tri du lieu
+    led.log_event("profiling", "quality_flags", inputs={"problem_id": problem_id, "thresholds": used_thresholds},
+                  extra=report["quality_flags_summary"])
     return report
 
 
@@ -560,8 +571,17 @@ def _fmt_table(t):
         lines.append(f"  Ghi chú: {', '.join(notes)}")
     if t.get("dictionary_check"):
         lines += _fmt_dictionary_check(t)
-    lines.append(f"  Cờ: {', '.join(t['flags']) or 'không'}")
+    lines += _fmt_quality_flags(t.get("quality_flags") or [])
     return "\n".join(lines)
+
+
+def _fmt_quality_flags(items, indent="  "):
+    lines = []
+    for label, sev in (("Cờ (cần xem)", "flag"), ("Lưu ý (info)", "info")):
+        msgs = [f["message"] for f in items if f["severity"] == sev]
+        if msgs:
+            lines.append(f"{indent}{label}: {'; '.join(msgs)}")
+    return lines or [f"{indent}Cờ: không"]
 
 
 def _fmt_dictionary_check(t):
@@ -622,20 +642,51 @@ def _add(lines, label, items, sep=", "):
 def format_summary(report):
     lines = [f"Bài {report['problem_id']} ({report['generated_at']}): {len(report['tables'])} bảng"]
     lines += _fmt_dictionary(report.get("dictionary"))
+    if report.get("quality_flags"):
+        lines += _fmt_quality_flags(report["quality_flags"], indent="")
     lines += [_fmt_table(t) for t in report["tables"].values()]
     for s in report["skipped"]:
         lines.append(f"Bỏ qua {s['key']}: {s['reason']}")
     for e in report["errors"]:
         lines.append(f"LỖI {e['key']}: {e['error']}")
+    all_flags = list(report.get("quality_flags") or []) + [f for t in report["tables"].values()
+                                                            for f in t.get("quality_flags") or []]
+    n_flag = sum(f["severity"] == "flag" for f in all_flags)
+    lines.append(f"Tổng: {n_flag} cờ, {len(all_flags) - n_flag} lưu ý")
     return "\n".join(lines)
+
+
+def _parse_set(items):
+    """["TEN=GIATRI", ...] -> dict; gia tri doi sang int, khong duoc thi float."""
+    out = {}
+    for item in items or []:
+        name, sep, raw = item.partition("=")
+        if not sep or not name.strip():
+            raise ValueError(f"--set cần dạng TEN=GIATRI, nhận được {item!r}")
+        try:
+            value = int(raw)
+        except ValueError:
+            try:
+                value = float(raw)
+            except ValueError:
+                raise ValueError(f"--set {name}: giá trị {raw!r} không phải số") from None
+        out[name.strip()] = value
+    return out
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(description="Profiling chất lượng dữ liệu của một bài.")
     p.add_argument("problem_id")
     p.add_argument("--no-samples", action="store_true", help="không ghi sample_records và top_values")
+    p.add_argument("--set", action="append", default=[], metavar="TEN=GIATRI",
+                   help="ghi đè ngưỡng trong config.py, vd. --set NULL_RATIO_FLAG=0.01 (dùng nhiều lần được)")
     args = p.parse_args(argv)
-    report = profile_problem(args.problem_id, include_samples=not args.no_samples)
+    try:
+        thresholds = _parse_set(args.set)
+        flags.resolve_thresholds(thresholds)
+    except ValueError as e:
+        p.error(str(e))
+    report = profile_problem(args.problem_id, include_samples=not args.no_samples, thresholds=thresholds)
     print(format_summary(report))
     print(f"\nĐã ghi {OUTPUT_DIR / args.problem_id / 'data_profile.json'} (khóa {REPORT_KEY}).")
     return 0
