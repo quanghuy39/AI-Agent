@@ -90,6 +90,21 @@ SUMMARY_DEFINITION_MAX_CHARS = 120  # dinh nghia dictionary cat con chung nay ky
 # Cot string/integer co ty le gia tri giong email/so dien thoai >= nguong nay -> tu dong che (kem canh bao).
 SENSITIVE_AUTO_RATIO = 0.30
 
+# ---------- Runner: chay code do AI sinh (Ngay 5) ----------
+RUNNER_TIMEOUT = 120                 # giay
+RUNNER_MAX_OUTPUT_CHARS = 20_000     # stdout/stderr dai hon thi giu dau + cuoi
+# Module goc (phan truoc dau cham dau tien) bi cam import trong code AI.
+RUNNER_FORBIDDEN_IMPORTS = ["boto3", "botocore", "storage", "llm", "litellm", "requests", "httpx", "urllib",
+                            "socket", "subprocess"]
+# Regex ap len moi hang chuoi trong code (ast): duong dan tro toi answers, cache, thu muc cha, .env.
+# Theo thanh phan duong dan nen "lru_cache", bien "cached" hay "Loading..." khong bi chan.
+RUNNER_FORBIDDEN_PATTERNS = [
+    r"(?i)(?:^|[\\/])answers(?:[\\/]|$)",
+    r"(?i)(?:^|[\\/])cache[\\/]",
+    r"(?:^|[\\/])\.\.(?:[\\/]|$)",
+    r"(?i)(?:^|[\\/])\.env(?:$|[\\/.])",
+]
+
 
 def get_r2_settings():
     """Tra ve dict cau hinh R2; bao loi ro neu thieu bien."""
