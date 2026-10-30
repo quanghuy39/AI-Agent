@@ -93,6 +93,7 @@ SENSITIVE_AUTO_RATIO = 0.30
 # ---------- Runner: chay code do AI sinh (Ngay 5) ----------
 RUNNER_TIMEOUT = 120                 # giay
 RUNNER_MAX_OUTPUT_CHARS = 20_000     # stdout/stderr dai hon thi giu dau + cuoi
+RUNNER_META_MAX_BYTES = 200_000      # file meta (AGENT_META_PATH) lon hon thi bo, bao meta_error
 # Module goc (phan truoc dau cham dau tien) bi cam import trong code AI.
 RUNNER_FORBIDDEN_IMPORTS = ["boto3", "botocore", "storage", "llm", "litellm", "requests", "httpx", "urllib",
                             "socket", "subprocess"]

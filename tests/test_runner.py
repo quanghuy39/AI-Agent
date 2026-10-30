@@ -184,6 +184,78 @@ def test_timeout_does_not_copy_back(env):
     assert not (env / "output" / TASK / "work" / "partial.csv").exists()
 
 
+# ---------- meta (AGENT_META_PATH) ----------
+
+WRITE_META = ("import json, os\n"
+              "meta = {'result_summary': {'total': 35, 'top': 'A'}, "
+              "'checks': [{'type': 'custom', 'name': 'x', 'passed': True, 'reason': 'ok'}]}\n"
+              "json.dump(meta, open(os.environ['AGENT_META_PATH'], 'w', encoding='utf-8'))\n")
+
+
+def test_valid_meta_is_returned_not_copied(env):
+    r = rc.run_code(WRITE_META, TASK, "meta_ok")
+    assert r.ok and r.meta_error is None
+    assert r.meta == {"result_summary": {"total": 35, "top": "A"},
+                      "checks": [{"type": "custom", "name": "x", "passed": True, "reason": "ok"}]}
+    assert r.files_created == [] and not list((env / "output").rglob("meta.json"))  # khong chep ve dau ca
+    log = Ledger(env / "output" / TASK).read_log()[-1]
+    assert log.extra["has_meta"] is True and log.extra["meta_error"] is None
+    assert "total" not in str(log.model_dump())  # khong ghi noi dung meta
+
+
+def test_no_meta_is_none(env):
+    r = rc.run_code("print(1)", TASK, "meta_none")
+    assert r.ok and r.meta is None and r.meta_error is None
+    assert Ledger(env / "output" / TASK).read_log()[-1].extra["has_meta"] is False
+
+
+@pytest.mark.parametrize("payload, expect", [
+    ("{not json", "không phải JSON hợp lệ"),
+    ("[1, 2]", "phải là một object JSON"),
+])
+def test_broken_meta_reports_error(env, payload, expect):
+    code = f"import os\nopen(os.environ['AGENT_META_PATH'], 'w').write({payload!r})\n"
+    r = rc.run_code(code, TASK, "meta_bad")
+    assert r.ok and r.meta is None and expect in r.meta_error
+    assert payload in r.meta_error  # file ngan: kem noi dung de AI sua
+    log = Ledger(env / "output" / TASK).read_log()[-1]
+    assert log.extra["has_meta"] is False and expect in log.extra["meta_error"]
+
+
+def test_long_broken_meta_hides_content_and_too_large(env, monkeypatch):
+    long_bad = "{" + "SECRETISH" * 100
+    r = rc.run_code(f"import os\nopen(os.environ['AGENT_META_PATH'], 'w').write({long_bad!r})\n", TASK, "meta_long")
+    assert r.meta is None and "không phải JSON" in r.meta_error and "SECRETISH" not in r.meta_error
+    monkeypatch.setattr(rc.config, "RUNNER_META_MAX_BYTES", 50)
+    r = rc.run_code(WRITE_META, TASK, "meta_big")
+    assert r.ok and r.meta is None and "quá lớn" in r.meta_error
+
+
+def test_meta_ignored_when_code_fails(env):
+    r = rc.run_code(WRITE_META + "raise RuntimeError('hong')\n", TASK, "meta_raise")
+    assert not r.ok and r.meta is None and r.meta_error is None
+    r = rc.run_code(WRITE_META + "while True:\n    pass\n", TASK, "meta_loop", timeout=2)
+    assert r.timed_out and r.meta is None
+
+
+def test_meta_does_not_leak_between_runs(env):
+    assert rc.run_code(WRITE_META, TASK, "S1").meta is not None
+    read = ("import os\np = os.environ['AGENT_META_PATH']\n"
+            "print('EXISTS' if os.path.exists(p) else 'MISSING')\n")
+    r = rc.run_code(read, TASK, "S2")
+    assert r.ok and r.stdout.strip() == "MISSING" and r.meta is None
+
+
+def test_meta_path_is_temporary(env):
+    import config
+    r = rc.run_code("import os\nprint(os.environ['AGENT_META_PATH'])\nprint(os.environ['AGENT_OUTPUT_DIR'])", TASK,
+                    "meta_path")
+    meta_path, out_dir = r.stdout.strip().splitlines()
+    for project_path in (config.ROOT, rc.OUTPUT_DIR, env / "cache"):
+        assert str(project_path).lower() not in meta_path.lower()
+    assert not meta_path.startswith(out_dir)  # khong nam trong work/
+
+
 def test_input_dir_has_no_answers(env):
     r = rc.run_code("import os\nfor root, d, f in os.walk(os.environ['AGENT_INPUT_DIR']):\n    print(root, f)",
                     TASK, "walk")

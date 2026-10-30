@@ -9,7 +9,8 @@ Chay thu: python -m runner.run_code <task> <file_code.py> [--step TEN] [--timeou
    AGENT_OUTPUT_DIR, PYTHONIOENCODING=utf-8. AGENT_OUTPUT_DIR la thu muc tam <tmp>/work/: truoc khi chay chep
    output/<task>/work/ vao do (de doc file trung gian cua buoc truoc); chi khi chay tron (ok) moi chep file
    moi/da doi ve (loi, qua gio, bi chan: khong chep, files_created rong).
-   Code AI khong biet duong dan nao cua du an.
+   AGENT_META_PATH tro toi <tmp>/meta/meta.json: code ghi JSON meta vao do; runner doc vao RunResult.meta
+   (chi khi chay tron), khong chep ve dau ca. Code AI khong biet duong dan nao cua du an.
 3. Quet tinh (ast) truoc khi chay: import cam (config.RUNNER_FORBIDDEN_IMPORTS) va duong dan cam trong hang chuoi
    (config.RUNNER_FORBIDDEN_PATTERNS) -> tu choi, khong chay.
 4. subprocess voi sys.executable, cwd = thu muc lam viec tam, timeout; qua gio thi kill, timed_out=True.
@@ -19,6 +20,7 @@ Quet tinh khong chan duoc moi cach lach (vd. ghep chuoi luc chay); lop 1 va 2 mo
 import argparse
 import ast
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -39,6 +41,8 @@ from storage import r2
 
 OUTPUT_DIR = ROOT / "output"
 SCRIPT_NAME = "main.py"
+META_NAME = "meta.json"
+META_SNIPPET_CHARS = 300  # meta_error chi kem noi dung file khi ngan hon chung nay
 _STEP_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 _TASK_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 
@@ -55,6 +59,8 @@ class RunResult(BaseModel):
     input_hashes: dict[str, str] = Field(default_factory=dict)  # ten file -> sha256
     duration_sec: float = 0.0
     warnings: list[str] = Field(default_factory=list)  # vd. R2 khong truy cap duoc, dung cache
+    meta: dict | None = None        # JSON code ghi vao AGENT_META_PATH; chi co khi chay tron (ok)
+    meta_error: str | None = None   # meta co nhung hong/qua lon
 
 
 # ---------- lop 3: quet tinh ----------
@@ -206,12 +212,37 @@ def _decode(data):
 
 # ---------- lop 2: moi truong ----------
 
-def child_env(input_dir, output_dir):
+def child_env(input_dir, output_dir, meta_path):
     env = {k: v for k, v in os.environ.items()
            if not k.upper().startswith("R2_") and not k.upper().endswith("_API_KEY")
            and k.upper() not in ("LLM_CONFIG_PATH", "PYTHONPATH")}
-    env.update(AGENT_INPUT_DIR=str(input_dir), AGENT_OUTPUT_DIR=str(output_dir), PYTHONIOENCODING="utf-8")
+    env.update(AGENT_INPUT_DIR=str(input_dir), AGENT_OUTPUT_DIR=str(output_dir), AGENT_META_PATH=str(meta_path),
+               PYTHONIOENCODING="utf-8")
     return env
+
+
+def read_meta(path):
+    """(meta dict | None, meta_error | None). Khong co file -> (None, None). Qua lon, khong phai JSON object
+    -> (None, mo ta loi ngan; chi kem noi dung khi file <= META_SNIPPET_CHARS ky tu)."""
+    path = Path(path)
+    if not path.is_file():
+        return None, None
+    size = path.stat().st_size
+    if size > config.RUNNER_META_MAX_BYTES:
+        return None, f"file meta quá lớn: {size} byte (tối đa {config.RUNNER_META_MAX_BYTES})"
+    raw = path.read_bytes()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return None, "file meta không phải UTF-8"
+    snippet = f"; nội dung: {text!r}" if len(text) <= META_SNIPPET_CHARS else ""
+    try:
+        meta = json.loads(text)
+    except json.JSONDecodeError as e:
+        return None, f"meta không phải JSON hợp lệ: {e.msg} (dòng {e.lineno}, cột {e.colno}){snippet}"
+    if not isinstance(meta, dict):
+        return None, f"meta phải là một object JSON, nhận {type(meta).__name__}{snippet}"
+    return meta, None
 
 
 # ---------- ham chinh ----------
@@ -237,9 +268,12 @@ def run_code(code, task, step_name, timeout=None):
     tmp = Path(tempfile.mkdtemp(prefix="agent_run_"))
     try:
         # input/: ban chep chi doc; work/: AGENT_OUTPUT_DIR (ban chep cua output/<task>/work/);
-        # run/: cwd, chua main.py (de main.py khong lan vao file ket qua)
+        # run/: cwd, chua main.py (de main.py khong lan vao file ket qua); meta/: AGENT_META_PATH (rieng,
+        # khong nam trong work/ nen khong bao gio duoc chep ve)
         input_dir, work_dir, run_dir = tmp / "input", tmp / "work", tmp / "run"
+        meta_path = tmp / "meta" / META_NAME
         run_dir.mkdir(parents=True)
+        meta_path.parent.mkdir()
         sources, result.warnings = input_files(task)
         if not sources and result.warnings:
             result.blocked_reason = "không lấy được dữ liệu đầu vào: R2 không truy cập được và cache trống"
@@ -259,7 +293,8 @@ def run_code(code, task, step_name, timeout=None):
         start = time.perf_counter()
         try:
             proc = subprocess.run([sys.executable, "-X", "utf8", SCRIPT_NAME], cwd=run_dir,
-                                  env=child_env(input_dir, work_dir), capture_output=True, timeout=timeout)
+                                  env=child_env(input_dir, work_dir, meta_path), capture_output=True,
+                                  timeout=timeout)
             result.returncode = proc.returncode
             result.stdout, result.stderr = _decode(proc.stdout), _decode(proc.stderr)
         except subprocess.TimeoutExpired as e:  # subprocess.run da kill tien trinh con
@@ -276,6 +311,7 @@ def run_code(code, task, step_name, timeout=None):
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(work_dir / rel, dst)
             result.files_created = [str(real_work / rel) for rel in changed]
+            result.meta, result.meta_error = read_meta(meta_path)  # chay hong thi khong tin meta: meta=None
     finally:
         _rmtree(tmp)
     _log(task, step_name, code_path, result, "timeout" if result.timed_out else "ok" if result.ok else "error")
@@ -292,7 +328,8 @@ def _log(task, step_name, code_path, result, status):
         "runner", step_name, inputs={"input_hashes": result.input_hashes}, code_file=rel, status=status,
         extra={"returncode": result.returncode, "duration_sec": result.duration_sec,
                "files_created": result.files_created, "blocked_reason": result.blocked_reason,
-               "warnings": result.warnings})
+               "warnings": result.warnings, "has_meta": result.meta is not None,  # khong ghi noi dung meta
+               "meta_error": result.meta_error})
 
 
 def main(argv=None):
@@ -312,6 +349,10 @@ def main(argv=None):
     else:
         print(f"ok={r.ok} returncode={r.returncode} timed_out={r.timed_out} {r.duration_sec}s")
         print(f"files_created: {r.files_created}")
+        if r.meta_error:
+            print(f"meta: lỗi - {r.meta_error}")
+        else:
+            print("meta: " + (f"có ({len(r.meta.get('checks') or [])} check)" if r.meta is not None else "không có"))
         if r.stdout:
             print("--- stdout ---\n" + r.stdout)
         if r.stderr:
