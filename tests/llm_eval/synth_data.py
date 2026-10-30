@@ -7,6 +7,8 @@ Bay co chu y:
 Ngay o dang chuoi dd-mm-yyyy.
 """
 
+import tempfile
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -78,10 +80,34 @@ def write_data(data_dir, seed=SEED):
     return data_dir
 
 
-def sample_text(n=3, seed=SEED):
-    """Vai dong mau dang CSV de dua vao prompt."""
-    customers, orders = make_tables(seed)
-    parts = []
-    for name, df in (("customers.csv", customers), ("orders.csv", orders)):
-        parts.append(f"{name}:\n{df.head(n).to_csv(index=False).strip()}")
-    return "\n".join(parts)
+def local_report(data_dir):
+    """data_quality_report cho cac CSV trong data_dir (khong R2, khong ledger): cung cac buoc cua
+    quality.profile_problem nhung khong co dictionary va ranges."""
+    from analysis.meta_grader import read_local_table
+    from profiling import flags, relationships
+    from profiling.quality import profile_table
+
+    frames = {p.stem: read_local_table(p) for p in sorted(Path(data_dir).glob("*.csv"))}
+    tables = {name: profile_table(df, name) for name, df in frames.items()}
+    for t in tables.values():
+        t["key_source"] = "guessed" if t["key_guessed"] else None
+    rel = relationships.check_relationships(frames, {n: t["key_cols"] for n, t in tables.items()})
+    report = {"problem_id": "llm_eval", "dictionary": {"tables": {}}, "files": [], "skipped": [], "errors": [],
+              "tables": tables, "relationship_checks": rel["checks"], "relationship_notes": rel["notes"],
+              "range_checks": []}
+    all_flags = flags.build_flags(report)
+    for name, t in tables.items():
+        t["quality_flags"] = [f for f in all_flags if f["table"] == name]
+    report["quality_flags"] = [f for f in all_flags if f["table"] not in tables]
+    return report
+
+
+@lru_cache(maxsize=4)
+def data_summary_text(seed=SEED):
+    """Ban tom tat du lieu (profiling.data_summary) cua du lieu gia, nhu vong lap phan tich dua vao prompt."""
+    import config
+    from profiling.data_summary import build_data_summary
+
+    with tempfile.TemporaryDirectory(prefix="llm_eval_summary_") as tmp:
+        report = local_report(write_data(Path(tmp) / "data", seed))
+    return build_data_summary(report, max_chars=config.SUMMARY_MAX_CHARS)["text"]

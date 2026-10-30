@@ -10,13 +10,17 @@ from pathlib import Path
 
 import pytest
 
+import config
+from analysis import loop
 from llm import FakeLLM, LLMChainExhausted, LLMRequestError, structured, usage, use_fake
+from skills.analysis import load_prompt, render_prompt
 from tests.llm_eval import cases_report, cases_slide, common, run_eval, summary, synth_data
 from tests.llm_eval.cases_analysis import CASES as ANALYSIS_CASES
-from tests.llm_eval.schemas import SCHEMAS, AnalysisOutput, ReportOutput, SlideOutput
+from tests.llm_eval.schemas import SCHEMAS, AnalysisStep, ReportOutput, SlideOutput
 from tests.llm_eval.scoring import (
     check_placeholders,
-    run_code,
+    flatten_expected,
+    run_step,
     score_case,
     static_check,
     typed_numbers,
@@ -25,7 +29,10 @@ from tests.llm_eval.scoring import (
 
 ROOT = Path(__file__).resolve().parents[1]
 CASES = {c.id: c for c in ANALYSIS_CASES + cases_report.CASES + cases_slide.CASES}
-SAVE = '\nimport os, json\nos.makedirs("output", exist_ok=True)\njson.dump(result, open("output/result.json", "w"))\n'
+READ = 'import json, os\nimport pandas as pd\nINPUT = os.environ["AGENT_INPUT_DIR"]\n'
+CUSTOM = {"type": "custom", "name": "c", "passed": True, "reason": "ok"}
+META = ('\nwith open(os.environ["AGENT_META_PATH"], "w", encoding="utf-8") as f:\n'
+        '    json.dump({"result_summary": result, "checks": [%r]}, f)\n' % CUSTOM)
 
 
 @pytest.fixture(scope="module")
@@ -39,9 +46,14 @@ def _no_usage_log(monkeypatch, tmp_path):
     monkeypatch.setattr(usage, "_path_override", tmp_path / "usage.jsonl")
 
 
-def analysis(code="", explanation="x", assumptions=(), reason=None):
-    return AnalysisOutput(explanation=explanation, code=code, assumptions=list(assumptions),
-                          cannot_answer_reason=reason)
+def analysis(code="", explanation="x", assumptions=(), reason=None, risks=("r",), output_files=()):
+    return AnalysisStep(explanation=explanation, method="m", code=code, can_be_wrong_if=list(risks),
+                        output_files=list(output_files), cannot_answer_reason=reason,
+                        new_assumptions=[{"kind": "assumption", "text": a} for a in assumptions])
+
+
+def reference(case):
+    return AnalysisStep(**case.reference)
 
 
 def applicable_all_true(crit):
@@ -52,12 +64,16 @@ def applicable_all_true(crit):
 
 @pytest.mark.parametrize("case", ANALYSIS_CASES, ids=lambda c: c.id)
 def test_a_reference_answer_passes(case, data_dir):
+    step = reference(case)
     if case.expected is not None:
-        run = run_code(case.reference["code"], data_dir)
+        run = run_step(step.code, data_dir, step)
         assert run.ok, run.error
-        assert values_match(case.expected, run.result) == (True, None)
-    crit, why = score_case(case, AnalysisOutput(**case.reference), data_dir)
+        assert run.grade.structural_errors == []
+        assert values_match(flatten_expected(case.expected), run.result_summary) == (True, None)
+    crit, why = score_case(case, step, data_dir)
     assert applicable_all_true(crit), why
+    if step.code:
+        assert crit["meta_valid"] is True
 
 
 @pytest.mark.parametrize("case", cases_report.CASES + cases_slide.CASES, ids=lambda c: c.id)
@@ -92,10 +108,43 @@ def test_synth_data_has_traps():
 
 @pytest.mark.parametrize("case", list(CASES.values()), ids=lambda c: c.id)
 def test_prompt_budget(case):
+    if case.role == "analysis":  # cung uoc luong va ngan sach voi vong lap that (analysis.loop)
+        (msg,) = common.build_messages(case)
+        budget = int(loop.min_input_tokens("analysis") * (1 - config.PROMPT_MARGIN))
+        assert loop.estimate_tokens(msg["content"]) <= budget, f"{case.id}: {len(msg['content'])} ký tự"
+        return
     msgs = common.build_messages(case) + [structured.instruction_message(SCHEMAS[case.role])]
     chars = sum(len(m["content"]) for m in msgs)
     # uoc luong than trong: ~2 ky tu tieng Viet / token
     assert chars / 2 < 1500, f"{case.id}: {chars} ký tự"
+
+
+def test_analysis_prompt_is_real_skill():
+    case = CASES["A01_groupby_sum"]
+    (msg,) = common.build_messages(case)
+    text = msg["content"]
+    assert msg["role"] == "user"
+    assert text == render_prompt("step", problem=case.user, data_summary=synth_data.data_summary_text(),
+                                 confirmed_decisions="(none)", previous_results="Files in output directory: (none)",
+                                 question=f"Q1: {case.user}", error_feedback="")
+    assert load_prompt("contract").strip() in text and "AGENT_META_PATH" in text
+    assert "## orders (rows 400" in text and "order_date: date %d-%m-%Y" in text  # data summary cua du lieu gia
+    assert "Kiểm tra khóa trùng" not in text and "./data" not in text and "result.json" not in text
+    assert not (ROOT / "tests" / "llm_eval" / "prompts" / "analysis.md").exists()
+    assert SCHEMAS["analysis"] is AnalysisStep
+
+
+@pytest.mark.parametrize("case", [c for c in ANALYSIS_CASES if c.expected is not None], ids=lambda c: c.id)
+def test_value_case_question_names_summary_keys(case):
+    line = f"Khóa result_summary: {', '.join(flatten_expected(case.expected))}."
+    assert line in case.user
+    assert common.build_messages(case)[0]["content"].count(line) == 2  # chi trong problem va question
+    assert "Khóa result_summary" not in load_prompt("step") + load_prompt("contract")
+
+
+def test_flatten_expected():
+    assert flatten_expected({"a": 1, "top": [{"id": "x", "v": 2}]}) == {"a": 1, "top_1_id": "x", "top_1_v": 2}
+    assert flatten_expected({"2025-01": 3}) == {"k2025_01": 3}
 
 
 # ---------- (b) tung tieu chi: dat va rot ----------
@@ -109,23 +158,58 @@ def test_b_value_correct_tolerance():
 
 
 def test_b_code_runs_pass_and_fail(data_dir):
-    ok = run_code('import pandas as pd\nresult = {"n": len(pd.read_csv("data/orders.csv"))}' + SAVE, data_dir)
-    assert ok.ok and ok.result == {"n": 400}
-    bad = run_code("raise ValueError('hỏng')", data_dir)
-    assert not bad.ok and bad.exit_code != 0 and "ValueError" in bad.stderr
-    no_out = run_code("x = 1", data_dir)
-    assert not no_out.ok and "result.json" in no_out.error
+    code = READ + 'result = {"n": len(pd.read_csv(os.path.join(INPUT, "orders.csv"), dtype=str))}' + META
+    ok = run_step(code, data_dir, analysis(code))
+    assert ok.ok and ok.result_summary == {"n": 400} and ok.grade.structural_errors == []
+    bad = run_step("raise ValueError('hỏng')", data_dir)
+    assert not bad.ok and bad.returncode != 0 and "ValueError" in bad.stderr
+    no_meta = run_step("x = 1", data_dir)
+    assert no_meta.ok and no_meta.meta is None
+
+
+def test_b_runs_in_runner_dirs(data_dir):
+    code = ('import os\nfrom pathlib import Path\n'
+            'print(sorted(os.listdir(os.environ["AGENT_INPUT_DIR"])), os.listdir(os.environ["AGENT_OUTPUT_DIR"]))\n'
+            'print(Path(os.environ["AGENT_META_PATH"]).name, Path.cwd().name, "R2_BUCKET" in os.environ)\n')
+    r = run_step(code, data_dir)
+    assert r.ok, r.stderr
+    assert r.stdout.splitlines()[:2] == ["['customers.csv', 'orders.csv'] []", "meta.json run False"]
 
 
 def test_b_code_hang_times_out(data_dir):
-    r = run_code("while True:\n    pass\n", data_dir, timeout_s=3)
+    r = run_step("while True:\n    pass\n", data_dir, timeout_s=3)
     assert r.timed_out and not r.ok
 
 
 def test_b_data_is_read_only(data_dir):
-    r = run_code('open("data/orders.csv", "w").write("x")', data_dir)
+    r = run_step('import os\nopen(os.path.join(os.environ["AGENT_INPUT_DIR"], "orders.csv"), "w").write("x")',
+                 data_dir)
     assert not r.ok
-    assert "PermissionError" in r.stderr
+    assert "PermissionError" in r.stderr and r.inputs_changed == []
+
+
+def test_b_meta_valid_is_separate_criterion(data_dir):
+    case = CASES["A01_groupby_sum"]
+    ref = reference(case)
+    # thieu check custom cho y can_be_wrong_if thu hai -> loi cau truc; so lieu van dung
+    crit, why = score_case(case, ref.model_copy(update={"can_be_wrong_if": ["a", "b"]}), data_dir)
+    assert crit["meta_valid"] is False and "check custom" in why["meta_valid"]
+    assert crit["value_correct"] is True and crit["code_runs"] is True
+    # khai bao file output khong co
+    crit, why = score_case(case, ref.model_copy(update={"output_files": ["nope.csv"]}), data_dir)
+    assert crit["meta_valid"] is False and "nope.csv" in why["meta_valid"]
+    # khong ghi meta: ca meta_valid va value_correct rot
+    no_meta = ref.code[:ref.code.index('with open(os.environ["AGENT_META_PATH"]')]
+    crit, why = score_case(case, ref.model_copy(update={"code": no_meta}), data_dir)
+    assert crit["code_runs"] is True and crit["meta_valid"] is False and crit["value_correct"] is False
+    assert "không có file meta" in why["meta_valid"]
+
+
+def test_b_value_from_result_summary(data_dir):
+    case = CASES["A02_distinct"]
+    code = READ + 'result = {"n_customers": 120}' + META  # so sai trong meta
+    crit, why = score_case(case, analysis(code), data_dir)
+    assert crit["meta_valid"] is True and crit["value_correct"] is False and "121" in why["value_correct"]
 
 
 def test_b_no_invented_columns(data_dir):
@@ -134,14 +218,14 @@ def test_b_no_invented_columns(data_dir):
     crit, _ = score_case(case, analysis(good), data_dir)
     assert crit["no_invented_columns"] is True
 
-    bad = good.replace('groupby("channel")["amount"]', 'groupby("channel")["revenue"]')
+    bad = good.replace('orders.groupby("channel")["amount"]', 'orders.groupby("channel")["revenue"]')
     crit, why = score_case(case, analysis(bad), data_dir)
     assert crit["no_invented_columns"] is False and "revenue" in why["no_invented_columns"]
 
 
 def test_b_static_columns_created_are_not_invented():
     rep = static_check(
-        'import pandas as pd\ndf = pd.read_csv("data/orders.csv")\n'
+        'import os\nimport pandas as pd\ndf = pd.read_csv(os.path.join(os.environ["AGENT_INPUT_DIR"], "x.csv"))\n'
         'df["month"] = df["order_date"].str[3:]\nx = df.groupby("month").agg(tong=("amount", "sum"))\n'
         'y = x.sort_values("tong")\n'
     )
@@ -153,9 +237,11 @@ def test_b_static_columns_created_are_not_invented():
 @pytest.mark.parametrize("code", [
     "import subprocess\nsubprocess.run(['dir'])",
     "import os\nos.system('dir')",
-    "import os\nos.remove('data/orders.csv')",
+    "import os\nos.remove(os.path.join(os.environ['AGENT_INPUT_DIR'], 'orders.csv'))",
     "import requests",
-    "from pathlib import Path\nPath('data/orders.csv').unlink()",
+    "from pathlib import Path\nPath('orders.csv').unlink()",
+    "import pandas as pd\npd.read_csv('data/orders.csv')",
+    "df.to_csv('output/x.csv')",
     "import pandas as pd\npd.read_csv('C:/Windows/win.ini')",
     "open('../secret.txt').read()",
     "exec('print(1)')",
@@ -166,36 +252,45 @@ def test_b_forbidden_static(code):
 
 def test_b_forbidden_allowed_examples():
     code = ('import os, json\nimport pandas as pd\nfrom pathlib import Path\n'
-            'df = pd.read_csv(os.path.join("data", "orders.csv"))\n'
-            'os.makedirs("output", exist_ok=True)\nrows = df.head().to_dict("records")\n'
-            'Path("output/result.json").write_text(json.dumps({"n": len(rows)}))\n')
-    assert static_check(code).forbidden == []
+            'df = pd.read_csv(os.path.join(os.environ["AGENT_INPUT_DIR"], "orders.csv"), dtype=str)\n'
+            'out = Path(os.environ["AGENT_OUTPUT_DIR"])\ndf.head().to_csv(out / "head.csv", index=False)\n'
+            'with open(os.environ["AGENT_META_PATH"], "w") as f:\n    json.dump({"n": len(df)}, f)\n')
+    rep = static_check(code)
+    assert rep.forbidden == [] and rep.unknown_columns == []  # os.environ["AGENT_..."] khong bi tinh la cot
 
 
 def test_b_forbidden_blocked_at_runtime(data_dir):
     case = CASES["A11_forbidden"]
-    # vuot qua phan tich tinh bang getattr; lop chan luc chay van bat
-    sneaky = case.reference["code"] + '\nimport os\ngetattr(os, "re" + "move")("data/orders.csv")\n'
-    crit, why = score_case(case, analysis(sneaky), data_dir)
+    # vuot qua phan tich tinh bang getattr; file dau vao chi doc (PermissionError) hoac bi xoa that -> deu bat
+    sneaky = case.reference["code"] + '\nimport os\ngetattr(os, "re" + "move")(os.path.join(INPUT, "orders.csv"))\n'
+    assert static_check(sneaky).forbidden == []
+    crit, why = score_case(case, reference(case).model_copy(update={"code": sneaky}), data_dir)
     assert crit["no_forbidden"] is False
-    good, _ = score_case(case, AnalysisOutput(**case.reference), data_dir)
+    good, _ = score_case(case, reference(case), data_dir)
     assert good["no_forbidden"] is True
 
 
-def test_b_network_blocked_at_runtime(data_dir):
-    r = run_code('import socket\nsocket.create_connection(("example.com", 80))', data_dir)
-    assert not r.ok and "bị chặn" in r.stderr
+def test_b_network_blocked_by_runner(data_dir):
+    code = 'import socket\nsocket.create_connection(("example.com", 80))'
+    r = run_step(code, data_dir)
+    assert not r.ok and "socket" in r.blocked_reason and r.returncode is None
+    crit, why = score_case(CASES["A01_groupby_sum"], analysis(code), data_dir)
+    assert crit["no_forbidden"] is False and "runner chặn" in why["no_forbidden"]
+    assert crit["code_runs"] is False and crit["meta_valid"] is False
 
 
 def test_b_handles_missing_column(data_dir):
     case = CASES["A09_missing_column"]
-    crit, _ = score_case(case, analysis("", reason="Không có cột discount."), data_dir)
-    assert crit["handles_missing_column"] is True and crit["code_runs"] is None
+    crit, _ = score_case(case, analysis("", reason="Không có cột discount.", risks=()), data_dir)
+    assert crit["handles_missing_column"] is True and crit["code_runs"] is None and crit["meta_valid"] is None
 
-    crit, _ = score_case(case, analysis("", reason=None), data_dir)
+    no_reason = AnalysisStep.model_construct(explanation="x", method="m", can_be_wrong_if=[], code="",
+                                             output_files=[], new_assumptions=[], cannot_answer_reason=None)
+    crit, _ = score_case(case, no_reason, data_dir)
     assert crit["handles_missing_column"] is False
 
-    code = 'import pandas as pd\nresult = pd.read_csv("data/orders.csv").groupby("channel")["discount"].sum().to_dict()' + SAVE
+    code = (READ + 'o = pd.read_csv(os.path.join(INPUT, "orders.csv"), dtype=str)\n'
+            'result = o.groupby("channel")["discount"].count().to_dict()' + META)
     crit, why = score_case(case, analysis(code), data_dir)
     assert crit["handles_missing_column"] is False
     assert crit["no_invented_columns"] is False
@@ -205,7 +300,7 @@ def test_b_assumptions_present(data_dir):
     case = CASES["A10_ambiguous"]
     code = case.reference["code"]
     crit, _ = score_case(case, analysis(code, assumptions=["Giá trị = tổng amount"]), data_dir)
-    assert crit["assumptions_present"] is True
+    assert crit["assumptions_present"] is True and crit["meta_valid"] is True
     crit, _ = score_case(case, analysis(code, assumptions=[]), data_dir)
     assert crit["assumptions_present"] is False
 

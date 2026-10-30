@@ -1,125 +1,87 @@
 """Cac ham cham cho bo kiem dinh. Khong goi mang.
 
-run_code chi de cham kiem dinh (Ngay 5 se viet runner/ rieng). No chay code cua model trong tien trinh
-con voi: cwd la thu muc tam, ban sao ./data/ chi doc, moi truong toi gian (python -I), va mot lop chan
-o muc Python (socket, subprocess, os.system, xoa file). Lop chan nay KHONG phai sandbox that: code co
-chu dich van co the vuot qua. Chi chay voi code tu model da duoc dua prompt kiem dinh.
+Code cua model (role analysis) chay bang runner/run_code.py (ham loi runner.execute, cung quet tinh scan_code)
+dung quy uoc cua vong lap that: thu muc tam input/ (ban chep chi doc cua moi file du lieu gia, dat thang
+trong input/ nhu runner chep file cua bai), work/ (AGENT_OUTPUT_DIR, rong), meta/meta.json (AGENT_META_PATH),
+run/ (cwd). So lieu cham lay tu result_summary trong meta; meta duoc cham rieng bang analysis.meta_grader.
+Runner KHONG phai sandbox that (xem runner/run_code.py).
 """
 
 import ast
-import json
 import math
-import os
 import re
 import shutil
 import stat
-import subprocess
-import sys
 import tempfile
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from analysis.meta_grader import GradeResult, grade_meta
+from runner import run_code as runner
 from tests.llm_eval.synth_data import KNOWN_COLUMNS
 
-BLOCKED_MSG = "bị chặn trong môi trường chấm"
 OUTPUT_LIMIT = 4000
-
-_GUARD = '''
-import os, runpy, shutil, socket, subprocess, sys
-MSG = "%s"
-def _deny(*args, **kwargs):
-    raise PermissionError(MSG)
-for _n in ("connect", "connect_ex", "bind", "sendto", "sendall", "send"):
-    setattr(socket.socket, _n, _deny)
-socket.create_connection = _deny
-socket.getaddrinfo = _deny
-for _n in ("run", "call", "check_call", "check_output", "Popen", "getoutput", "getstatusoutput"):
-    setattr(subprocess, _n, _deny)
-for _n in dir(os):
-    if _n in ("system", "popen", "remove", "unlink", "rmdir", "removedirs", "rename", "renames",
-              "replace", "startfile", "kill", "truncate") or _n.startswith(("spawn", "exec")):
-        setattr(os, _n, _deny)
-shutil.rmtree = _deny
-shutil.move = _deny
-code_path = sys.argv[1]
-sys.argv = [code_path]
-runpy.run_path(code_path, run_name="__main__")
-''' % BLOCKED_MSG
 
 
 @dataclass
-class RunResult:
-    ok: bool  # ma thoat 0 va output/result.json la mot object JSON
-    exit_code: int | None
+class EvalRun:
+    ok: bool  # khong bi chan, ma thoat 0, khong qua gio
+    returncode: int | None
     timed_out: bool
+    blocked_reason: str | None
     stdout: str
     stderr: str
-    result: dict | None
+    meta: dict | None  # JSON code ghi vao AGENT_META_PATH (chi khi ok)
+    meta_error: str | None
+    grade: GradeResult | None  # grade_meta (chi khi co meta)
+    inputs_changed: list[str]  # file dau vao bi xoa/sua sau khi chay
     error: str | None  # mo ta ngan khi khong ok
     duration_s: float
 
-
-def _decode(b):
-    if b is None:
-        return ""
-    text = b.decode("utf-8", errors="replace") if isinstance(b, bytes) else b
-    return text[-OUTPUT_LIMIT:]
+    @property
+    def result_summary(self):
+        rs = (self.meta or {}).get("result_summary")
+        return rs if isinstance(rs, dict) else None
 
 
-def _rmtree(path):
-    def _retry(func, p, _exc):
-        os.chmod(p, stat.S_IWRITE)
-        func(p)
-    if sys.version_info >= (3, 12):
-        shutil.rmtree(path, onexc=_retry)
-    else:  # pragma: no cover
-        shutil.rmtree(path, onerror=lambda f, p, e: _retry(f, p, e))
+def _error(r):
+    if r.blocked_reason:
+        return f"bị chặn: {r.blocked_reason}"
+    if r.timed_out:
+        return "quá thời gian"
+    if r.returncode != 0:
+        last = r.stderr.strip().splitlines()[-1] if r.stderr.strip() else ""
+        return f"mã thoát {r.returncode}: {last[:200]}"
+    return None
 
 
-def run_code(code, data_dir, timeout_s=30):
-    """Chay code trong tien trinh con. cwd co ./data/ (ban sao chi doc) va ./output/ rong."""
-    work = Path(tempfile.mkdtemp(prefix="llm_eval_"))
+def run_step(code, data_dir, step=None, timeout_s=30):
+    """Chay code trong runner voi du lieu cua data_dir; cham meta bang grade_meta(meta, step, ...) khi co
+    step va meta. Khong raise khi code loi/bi chan/qua gio."""
+    blocked = runner.scan_code(code)
+    if blocked:
+        return EvalRun(False, None, False, blocked, "", "", None, None, None, [], f"bị chặn: {blocked}", 0.0)
+    tmp = Path(tempfile.mkdtemp(prefix="llm_eval_"))
     try:
-        data = work / "data"
-        shutil.copytree(data_dir, data)
-        for f in data.iterdir():
-            os.chmod(f, stat.S_IREAD)
-        (work / "output").mkdir()
-        (work / "tmp").mkdir()
-        (work / "solution.py").write_text(code, encoding="utf-8")
-        (work / "_guard.py").write_text(_GUARD, encoding="utf-8")
-
-        env = {"PATH": os.path.dirname(sys.executable), "TEMP": str(work / "tmp"), "TMP": str(work / "tmp")}
-        if "SYSTEMROOT" in os.environ:  # Windows can bien nay de khoi dong Python
-            env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
-        cmd = [sys.executable, "-I", "-X", "utf8", "_guard.py", "solution.py"]
-
-        t0 = time.perf_counter()
-        try:
-            proc = subprocess.run(cmd, cwd=work, env=env, capture_output=True, timeout=timeout_s)
-        except subprocess.TimeoutExpired as e:
-            return RunResult(False, None, True, _decode(e.stdout), _decode(e.stderr), None,
-                             f"quá thời gian {timeout_s}s", round(time.perf_counter() - t0, 3))
-        duration = round(time.perf_counter() - t0, 3)
-        stdout, stderr = _decode(proc.stdout), _decode(proc.stderr)
-        if proc.returncode != 0:
-            last = stderr.strip().splitlines()[-1] if stderr.strip() else ""
-            return RunResult(False, proc.returncode, False, stdout, stderr, None,
-                             f"mã thoát {proc.returncode}: {last[:200]}", duration)
-
-        result_path = work / "output" / "result.json"
-        if not result_path.exists():
-            return RunResult(False, 0, False, stdout, stderr, None, "không có output/result.json", duration)
-        try:
-            result = json.loads(result_path.read_text(encoding="utf-8"))
-        except (ValueError, UnicodeDecodeError) as e:
-            return RunResult(False, 0, False, stdout, stderr, None, f"result.json không phải JSON: {e}", duration)
-        if not isinstance(result, dict):
-            return RunResult(False, 0, False, stdout, stderr, None, "result.json không phải object JSON", duration)
-        return RunResult(True, 0, False, stdout, stderr, result, None, duration)
+        input_dir, work_dir, run_dir = tmp / "input", tmp / "work", tmp / "run"
+        meta_path = tmp / "meta" / runner.META_NAME
+        for d in (input_dir, work_dir, run_dir, meta_path.parent):
+            d.mkdir(parents=True)
+        hashes = {}
+        for src in sorted(Path(data_dir).iterdir()):
+            if src.is_file():
+                dst = input_dir / src.name
+                shutil.copyfile(src, dst)
+                dst.chmod(stat.S_IREAD)
+                hashes[src.name] = runner._sha256(dst)
+        r = runner.execute(code, input_dir, work_dir, run_dir, meta_path, timeout_s)
+        changed = [n for n, h in hashes.items()
+                   if not (input_dir / n).is_file() or runner._sha256(input_dir / n) != h]
+        grade = grade_meta(r.meta, step, input_dir, work_dir) if r.meta is not None and step is not None else None
+        return EvalRun(r.ok, r.returncode, r.timed_out, None, r.stdout[-OUTPUT_LIMIT:], r.stderr[-OUTPUT_LIMIT:],
+                       r.meta, r.meta_error, grade, changed, _error(r), r.duration_sec)
     finally:
-        _rmtree(work)
+        runner._rmtree(tmp)
 
 
 # ---------- So sanh gia tri ----------
@@ -171,6 +133,32 @@ def values_match(expected, actual, rel_tol=1e-3, abs_tol=1e-6, path="$"):
                 return False, why
         return True, None
     return False, f"{path}: kiểu expected không hỗ trợ {type(expected).__name__}"
+
+
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def summary_key(parts):
+    """Duong dan trong dap an -> khoa result_summary (dinh danh ASCII): noi bang '_', chi so danh sach tu 1,
+    ky tu khac chu/so/_ thanh '_', bat dau bang so thi them 'k'. Vd ("top", 0, "total") -> "top_1_total",
+    ("2025-01",) -> "k2025_01"."""
+    key = re.sub(r"[^A-Za-z0-9_]", "_", "_".join(str(p) for p in parts))
+    return key if _IDENT_RE.match(key) else f"k{key}"
+
+
+def flatten_expected(expected, parts=()):
+    """Dap an long nhau -> dict phang {khoa result_summary: gia tri} (result_summary chi chua gia tri phang)."""
+    if isinstance(expected, dict):
+        out = {}
+        for k, v in expected.items():
+            out.update(flatten_expected(v, (*parts, k)))
+        return out
+    if isinstance(expected, list):
+        out = {}
+        for i, v in enumerate(expected, 1):
+            out.update(flatten_expected(v, (*parts, i)))
+        return out
+    return {summary_key(parts): expected}
 
 
 # ---------- Placeholder va "khong tu go so" ----------
@@ -323,15 +311,9 @@ def _call_name(call):
     return ".".join(reversed(names))
 
 
-def _path_allowed(path, write):
-    p = path.replace("\\", "/")
-    if p.startswith("./"):
-        p = p[2:]
-    if p.startswith("/") or re.match(r"^[A-Za-z]:", p) or ".." in p.split("/"):
-        return False
-    if write:
-        return p == "output" or p.startswith("output/")
-    return p.startswith(("data/", "output/")) or p in ("data", "output")
+def _is_environ(node):
+    return isinstance(node, (ast.Attribute, ast.Name)) and (
+        getattr(node, "attr", None) == "environ" or getattr(node, "id", None) == "environ")
 
 
 @dataclass
@@ -370,7 +352,7 @@ def static_check(code):
                 for a in node.names:
                     if a.name in FORBIDDEN_OS_CALLS:
                         rep.forbidden.append(f"from os import {a.name}")
-        elif isinstance(node, ast.Subscript):
+        elif isinstance(node, ast.Subscript) and not _is_environ(node.value):  # os.environ["AGENT_..."]: khong la cot
             keys = _strs(node.slice)
             if isinstance(node.ctx, ast.Store):
                 rep.created_columns.update(keys)
@@ -391,26 +373,20 @@ def _check_call(node, rep):
     if last in FORBIDDEN_METHODS and not name.startswith("os."):
         rep.forbidden.append(f"{name}()")
 
-    # duong dan doc/ghi
+    # duong dan doc/ghi: hop dong bat moi file di qua AGENT_INPUT_DIR / AGENT_OUTPUT_DIR / AGENT_META_PATH,
+    # nen duong dan hang so (biet tron luc phan tich tinh) la vi pham
     if name in ("open", "io.open") and node.args:
         path = _const_path(node.args[0])
-        mode = "r"
-        if len(node.args) > 1 and isinstance(node.args[1], ast.Constant):
-            mode = str(node.args[1].value)
-        for kw in node.keywords:
-            if kw.arg == "mode" and isinstance(kw.value, ast.Constant):
-                mode = str(kw.value.value)
-        write = any(c in mode for c in "wax+")
-        if path is not None and not _path_allowed(path, write):
-            rep.forbidden.append(f"open({path!r}, {mode!r}) ngoài thư mục cho phép")
+        if path is not None:
+            rep.forbidden.append(f"open({path!r}) không qua AGENT_*")
     if last in READ_FUNCS and node.args:
         path = _const_path(node.args[0])
-        if path is not None and not _path_allowed(path, write=False):
-            rep.forbidden.append(f"{last}({path!r}) ngoài ./data/")
+        if path is not None:
+            rep.forbidden.append(f"{last}({path!r}) không qua AGENT_INPUT_DIR")
     if last in WRITE_FUNCS and node.args:
         path = _const_path(node.args[0])
-        if path is not None and not _path_allowed(path, write=True):
-            rep.forbidden.append(f"{last}({path!r}) ngoài ./output/")
+        if path is not None:
+            rep.forbidden.append(f"{last}({path!r}) không qua AGENT_OUTPUT_DIR")
 
     # cot duoc dung / duoc tao
     if last in COLUMN_METHODS:
@@ -469,8 +445,10 @@ def _fail_all(names, reason):
 
 
 def score_analysis(case, out, data_dir, timeout_s=30):
+    """out: AnalysisStep (hoac None khi JSON sai). Tieu chi rieng meta_valid: meta co, doc duoc va grade_meta
+    khong co structural_errors. value_correct so dap an (lam phang) voi result_summary trong meta."""
     kind = case.checks["kind"]
-    names = ["code_runs", "no_invented_columns", "no_forbidden"]
+    names = ["code_runs", "meta_valid", "no_invented_columns", "no_forbidden"]
     names += {"value": ["value_correct"], "missing_column": ["handles_missing_column"],
               "ambiguous": ["assumptions_present"]}[kind]
     if out is None:
@@ -480,20 +458,36 @@ def score_analysis(case, out, data_dir, timeout_s=30):
     crit, why = {"json_valid": True}, {}
     code = (out.code or "").strip()
     rep = static_check(code) if code else StaticReport()
-    run = run_code(code, data_dir, timeout_s) if code and not rep.parse_error else None
+    run = run_step(code, data_dir, out, timeout_s) if code and not rep.parse_error else None
 
-    # code_runs
+    # code_runs, meta_valid
     if kind == "missing_column" and not code:
-        crit["code_runs"] = None
+        crit["code_runs"] = crit["meta_valid"] = None
     else:
         crit["code_runs"] = bool(run and run.ok)
         if not crit["code_runs"]:
             why["code_runs"] = rep.parse_error or (run.error if run else "code rỗng")
+        problems = []
+        if not crit["code_runs"]:
+            problems.append("code không chạy được")
+        elif run.meta_error:
+            problems.append(run.meta_error)
+        elif run.meta is None:
+            problems.append("không có file meta (AGENT_META_PATH)")
+        else:
+            problems += run.grade.structural_errors
+        crit["meta_valid"] = not problems
+        if problems:
+            why["meta_valid"] = "; ".join(problems)
 
-    # no_forbidden: tinh + luc chay
+    # no_forbidden: tinh + runner chan + file dau vao bi dong vao
     forbidden = list(rep.forbidden)
-    if run and BLOCKED_MSG in run.stderr:
-        forbidden.append("bị chặn khi chạy (mạng/subprocess/xóa file)")
+    if run and run.blocked_reason:
+        forbidden.append(f"runner chặn: {run.blocked_reason}")
+    if run and run.inputs_changed:
+        forbidden.append(f"file đầu vào bị xóa/sửa: {run.inputs_changed}")
+    if run and "PermissionError" in run.stderr:
+        forbidden.append("PermissionError khi chạy (ghi/xóa file chỉ đọc)")
     crit["no_forbidden"] = not forbidden
     if forbidden:
         why["no_forbidden"] = "; ".join(forbidden)
@@ -513,8 +507,11 @@ def score_analysis(case, out, data_dir, timeout_s=30):
         elif not (run and run.ok):
             crit["value_correct"] = False
             why["value_correct"] = "code không chạy được"
+        elif run.result_summary is None:
+            crit["value_correct"] = False
+            why["value_correct"] = "meta không có result_summary"
         else:
-            ok, reason = values_match(case.expected, run.result)
+            ok, reason = values_match(flatten_expected(case.expected), run.result_summary)
             crit["value_correct"] = ok
             if not ok:
                 why["value_correct"] = reason
@@ -528,9 +525,9 @@ def score_analysis(case, out, data_dir, timeout_s=30):
         elif uses_col:
             why["handles_missing_column"] = f"code vẫn dùng cột {col!r}"
     elif kind == "ambiguous":
-        crit["assumptions_present"] = any(a.strip() for a in out.assumptions)
+        crit["assumptions_present"] = any(a.text.strip() for a in out.new_assumptions)
         if not crit["assumptions_present"]:
-            why["assumptions_present"] = "đề mơ hồ nhưng assumptions rỗng"
+            why["assumptions_present"] = "đề mơ hồ nhưng new_assumptions rỗng"
     return crit, why
 
 

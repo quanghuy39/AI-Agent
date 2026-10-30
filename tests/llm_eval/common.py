@@ -1,4 +1,8 @@
-"""Case, nap prompt va dung messages cho bo kiem dinh."""
+"""Case, nap prompt va dung messages cho bo kiem dinh.
+
+analysis: prompt "step" that cua skills/analysis (render_prompt) voi data summary cua du lieu gia, mot tin nhan
+user nhu analysis/loop.py. report/slide: prompt tam trong prompts/.
+"""
 
 import json
 import re
@@ -19,7 +23,7 @@ class Case:
     user: str  # yeu cau chinh (cho report/slide: nhiem vu; so ket qua va insight ghep them)
     checks: dict = field(default_factory=dict)
     # analysis
-    reference: dict | None = None  # cau tra loi mau dung (dang AnalysisOutput)
+    reference: dict | None = None  # cau tra loi mau dung (dang AnalysisStep)
     expected: object = None
     # report / slide
     ledger: dict = field(default_factory=dict)
@@ -28,17 +32,21 @@ class Case:
 
 
 def load_prompt(role):
-    """Doc prompt he thong, bo ghi chu <!-- --> o dau file."""
+    """Doc prompt he thong tam cua report/slide, bo ghi chu <!-- --> o dau file."""
     text = (PROMPTS_DIR / f"{role}.md").read_text(encoding="utf-8")
-    text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL).strip()
-    if role == "analysis":
-        text = text.replace("<<SAMPLE_ROWS>>", synth_data.sample_text())
-    return text
+    return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL).strip()
+
+
+def analysis_prompt(case):
+    """Prompt step cua skill phan tich cho mot case: de = cau hoi cua case, la cau hoi duy nhat Q1, chua co
+    quyet dinh, ket qua hay file nao truoc do."""
+    from skills.analysis import render_prompt
+    return render_prompt("step", problem=case.user, data_summary=synth_data.data_summary_text(),
+                         confirmed_decisions="(none)", previous_results="Files in output directory: (none)",
+                         question=f"Q1: {case.user}", error_feedback="")
 
 
 def user_content(case):
-    if case.role == "analysis":
-        return case.user
     lines = [f"Nhiệm vụ: {case.user}"]
     if case.role == "report":
         lo, hi = case.checks.get("min_sections", 1), case.checks.get("max_sections", 10)
@@ -55,6 +63,8 @@ def user_content(case):
 
 
 def build_messages(case):
+    if case.role == "analysis":
+        return [{"role": "user", "content": analysis_prompt(case)}]
     return [
         {"role": "system", "content": load_prompt(case.role)},
         {"role": "user", "content": user_content(case)},

@@ -1,13 +1,10 @@
-"""Schema pydantic cho cau tra loi cua tung role trong bo kiem dinh."""
+"""Schema pydantic cho cau tra loi cua tung role trong bo kiem dinh.
+
+analysis dung dung schema cua skill that (skills.analysis.schemas.AnalysisStep)."""
 
 from pydantic import BaseModel
 
-
-class AnalysisOutput(BaseModel):
-    explanation: str
-    code: str
-    assumptions: list[str]
-    cannot_answer_reason: str | None = None
+from skills.analysis.schemas import AnalysisStep
 
 
 class Section(BaseModel):
@@ -29,4 +26,4 @@ class SlideOutput(BaseModel):
     slides: list[Slide]
 
 
-SCHEMAS = {"analysis": AnalysisOutput, "report": ReportOutput, "slide": SlideOutput}
+SCHEMAS = {"analysis": AnalysisStep, "report": ReportOutput, "slide": SlideOutput}
