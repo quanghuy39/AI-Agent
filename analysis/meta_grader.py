@@ -70,7 +70,7 @@ def _find_file(name, input_dir, work_dir):
     raise _GradeError(f"không có file '{name}' trong thư mục output hoặc input")
 
 
-def _read(path):
+def read_local_table(path):
     """Doc bang cuc bo dang chuoi (dtype=str). CSV: nhan dien ma hoa/dau phan cach bang storage."""
     suffix = path.suffix.lower()
     if suffix == ".parquet":
@@ -95,7 +95,7 @@ def _grade_check(check, input_dir, work_dir, cache):
     def table(name):
         path = _find_file(name, input_dir, work_dir)
         if path not in cache:
-            cache[path] = _read(path)
+            cache[path] = read_local_table(path)
         return cache[path]
 
     if check.type == "custom":

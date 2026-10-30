@@ -94,6 +94,13 @@ SENSITIVE_AUTO_RATIO = 0.30
 RUNNER_TIMEOUT = 120                 # giay
 RUNNER_MAX_OUTPUT_CHARS = 20_000     # stdout/stderr dai hon thi giu dau + cuoi
 RUNNER_META_MAX_BYTES = 200_000      # file meta (AGENT_META_PATH) lon hon thi bo, bao meta_error
+
+# ---------- Vong lap phan tich (Ngay 5) ----------
+ANALYSIS_MAX_RETRIES = 3             # so lan goi lai AI cho moi cau hoi sau lan dau
+ANALYSIS_FEEDBACK_STDERR_CHARS = 1500  # error_feedback chi giu chung nay ky tu cuoi cua stderr
+ANALYSIS_MASK_MIN_CHARS = 4          # gia tri cot che ngan hon thi khong thay (tranh thay nham)
+# Cot che mac dinh theo bai (cong voi (SENSITIVE) trong dictionary va --sensitive); chi ap dung khi cot co that.
+ANALYSIS_DEFAULT_SENSITIVE = {"bai1": ["CUSTOMER.customer_id"]}
 # Module goc (phan truoc dau cham dau tien) bi cam import trong code AI.
 RUNNER_FORBIDDEN_IMPORTS = ["boto3", "botocore", "storage", "llm", "litellm", "requests", "httpx", "urllib",
                             "socket", "subprocess"]
