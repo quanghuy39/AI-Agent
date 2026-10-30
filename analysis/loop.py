@@ -219,6 +219,10 @@ def make_plan(ctx):
 
 def print_plan(plan):
     print(f"\nHiểu đề: {plan.understanding}")
+    print("Yêu cầu của đề:")
+    for i, req in enumerate(plan.requirements, 1):
+        keys = [q.key for q in plan.sub_questions if i in q.covers]
+        print(f"  {i}. {req} -> {', '.join(keys) if keys else '(chưa có câu hỏi)'}")
     print("Câu hỏi nhỏ:")
     for q in plan.sub_questions:
         dep = f" (cần {', '.join(q.depends_on)})" if q.depends_on else ""
@@ -449,7 +453,8 @@ def run_loop(task, sensitive=None, max_retries=None, yes=False, ask_user=input):
 def demo_fake():
     """FakeLLM voi kich ban demo tong quat: dem dong tung file CSV trong input (khong goi AI that)."""
     plan = {"understanding": "Demo: đếm số dòng từng bảng.", "assumptions": [],
-            "sub_questions": [{"key": "Q1", "question": "Mỗi bảng có bao nhiêu dòng?"}]}
+            "requirements": ["Số dòng của từng bảng"],
+            "sub_questions": [{"key": "Q1", "question": "Mỗi bảng có bao nhiêu dòng?", "covers": [1]}]}
     code = '''import json, os
 import pandas as pd
 inp, out = os.environ["AGENT_INPUT_DIR"], os.environ["AGENT_OUTPUT_DIR"]

@@ -4,15 +4,18 @@ Runner chay that (code ngan) tren ban chep du lieu gia.
 Chay: python -m pytest tests/test_analysis_loop.py -v
 """
 
+import json
+
 import pytest
+from pydantic import ValidationError
 
 import llm
 from analysis import loop
 from ledger import Ledger
-from llm import LLMChainExhausted
+from llm import LLMChainExhausted, structured
 from profiling import quality
 from runner import run_code as runner
-from skills.analysis.schemas import SubQuestion
+from skills.analysis.schemas import AnalysisPlan, SubQuestion
 from storage import r2
 
 TASK = "baiL"
@@ -26,8 +29,10 @@ FILES = {
 }
 
 PLAN = {"understanding": "Tổng theo khách rồi đếm khách lớn.",
-        "sub_questions": [{"key": "Q1", "question": "Tổng amount theo khách?"},
-                          {"key": "Q2", "question": "Bao nhiêu khách có tổng > 70?", "depends_on": ["Q1"]}],
+        "requirements": ["Tổng amount theo khách hàng", "Số khách có tổng > 70"],
+        "sub_questions": [{"key": "Q1", "question": "Tổng amount theo khách?", "covers": [1]},
+                          {"key": "Q2", "question": "Bao nhiêu khách có tổng > 70?", "depends_on": ["Q1"],
+                           "covers": [2]}],
         "assumptions": [{"kind": "metric_definition", "text": "Tổng = cộng amount mọi đơn", "required": True}],
         "proposed_ranges": [{"column": "ORDERS.amount", "min": 0, "reason": "không âm"}]}
 
@@ -227,10 +232,33 @@ def test_topo_order_and_cycle():
 
 
 def test_cycle_in_plan_stops(env):
-    plan = {**PLAN, "sub_questions": [{"key": "Q1", "question": "a", "depends_on": ["Q2"]},
-                                      {"key": "Q2", "question": "b", "depends_on": ["Q1"]}]}
+    plan = {**PLAN, "sub_questions": [{"key": "Q1", "question": "a", "depends_on": ["Q2"], "covers": [1]},
+                                      {"key": "Q2", "question": "b", "depends_on": ["Q1"], "covers": [2]}]}
     code, _ = run([plan])
     assert code == loop.STOPPED and any("vòng phụ thuộc" in o.text for o in ledger(env).open_items())
+
+
+def test_print_plan_maps_requirements(capsys):
+    plan = AnalysisPlan(**{**PLAN, "requirements": ["Tổng theo khách", "Số khách lớn", "Tổng và số khách"],
+                           "sub_questions": [{"key": "Q1", "question": "a", "covers": [1, 3]},
+                                             {"key": "Q2", "question": "b", "depends_on": ["Q1"], "covers": [2, 3]}]})
+    loop.print_plan(plan)
+    out = capsys.readouterr().out
+    assert "Yêu cầu của đề:" in out
+    assert "1. Tổng theo khách -> Q1" in out and "2. Số khách lớn -> Q2" in out and "3. Tổng và số khách -> Q1, Q2" in out
+
+
+def test_plan_missing_requirement_is_schema_error():
+    # ValidationError tu structured.parse la tin hieu de ask_model goi lai model (json_retries)
+    bad = json.dumps({**PLAN, "requirements": PLAN["requirements"] + ["Yêu cầu bị bỏ sót"]}, ensure_ascii=False)
+    with pytest.raises(ValidationError, match=r"yêu cầu \[3\] chưa có sub_question"):
+        structured.parse(bad, AnalysisPlan)
+
+
+def test_plan_without_coverage_stops_loop(env):
+    plan = {**PLAN, "requirements": PLAN["requirements"] + ["Yêu cầu bị bỏ sót"]}
+    code, fake = run([plan])
+    assert code == loop.EXHAUSTED and len(fake.calls) == 1  # FakeLLM khong thu lai; khong giai cau nao
 
 
 # ---------- do dai prompt ----------

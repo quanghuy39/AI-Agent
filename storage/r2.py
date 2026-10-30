@@ -1,6 +1,9 @@
 """Module storage: doc/ghi du lieu tren Cloudflare R2 (tuong thich S3)."""
 import csv
+import shutil
 import sys
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 import boto3
@@ -71,13 +74,28 @@ def list_objects(prefix="", grader=False):
     return result
 
 
+def _is_answers(key):
+    return any(part.lower() == "answers" for part in Path(key).parts)
+
+
+def _inside(path, base):
+    try:
+        Path(path).resolve().relative_to(Path(base).resolve())
+        return True
+    except ValueError:
+        return False
+
+
 def download_with_cache(key, cache_dir=None, grader=False):
-    """Tai file ve cache/. Chi tai lai khi etag tren R2 da doi. Tra ve Path."""
+    """Tai file ve cache/ (hoac cache_dir). Chi tai lai khi etag tren R2 da doi. Tra ve Path.
+    answers/ KHONG BAO GIO duoc ghi vao cache/ (ke ca grader=True): dung grader_download (thu muc tam)."""
     _check_read(key, grader)
     if ".." in Path(key).parts:
         raise ValueError(f"Đường dẫn không hợp lệ: {key}")
     bucket = get_r2_settings()["R2_BUCKET"]
     base = Path(cache_dir) if cache_dir else CACHE_DIR
+    if _is_answers(key) and _inside(base, CACHE_DIR):
+        raise ValueError(f"Không được tải '{key}' vào cache/. Đáp án chỉ đọc qua grader_download (thư mục tạm).")
     local = base / key
     etag_file = local.parent / (local.name + ".etag")
     local.parent.mkdir(parents=True, exist_ok=True)
@@ -92,6 +110,17 @@ def download_with_cache(key, cache_dir=None, grader=False):
     client.download_file(bucket, key, str(local))
     etag_file.write_text(remote_etag, encoding="utf-8")
     return local
+
+
+@contextmanager
+def grader_download(key):
+    """Quyen grader: tai mot file (thuong la answers/...) vao thu muc tam ngoai cache/, tra Path trong khoi with,
+    xoa thu muc tam khi ra khoi with (ke ca khi loi). Chi dung trong tests/grade_*.py va lenh --grader."""
+    tmp = Path(tempfile.mkdtemp(prefix="grader_"))
+    try:
+        yield download_with_cache(key, cache_dir=tmp, grader=True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def get_etag(key, cache_dir=None):
@@ -120,7 +149,14 @@ def read_table(key, grader=False, dtype=None):
     giu la null (giu nguyen "05042025", "4.0"...). Voi parquet (da co kieu san) dtype=str chi doi
     tung gia tri khac null sang str.
     """
-    path = download_with_cache(key, grader=grader)
+    if _is_answers(key):  # doc tu thu muc tam, khong qua cache/; khong co quyen grader thi _check_read tu choi
+        _check_read(key, grader)
+        with grader_download(key) as path:
+            return _read_path(path, dtype)
+    return _read_path(download_with_cache(key, grader=grader), dtype)  # download_with_cache tu _check_read
+
+
+def _read_path(path, dtype):
     if str(path).lower().endswith(".parquet"):
         df = pd.read_parquet(path)
         if dtype is str:
@@ -168,9 +204,10 @@ def _fmt_size(n):
     return f"{n:.1f} TB"
 
 
-if __name__ == "__main__":
-    grader = "--grader" in sys.argv[1:]
-    args = [a for a in sys.argv[1:] if a != "--grader"]
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    grader = "--grader" in argv
+    args = [a for a in argv if a != "--grader"]
     if args and args[0] == "list":
         prefix = args[1] if len(args) > 1 else get_r2_settings()["R2_INPUT_PREFIX"]
         for o in list_objects(prefix, grader=grader):
@@ -183,3 +220,8 @@ if __name__ == "__main__":
         print("Cách dùng:")
         print("  python -m storage.r2 list [prefix] [--grader]")
         print("  python -m storage.r2 head <key> [--grader]")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -2,16 +2,13 @@
 KHONG phai pytest. Chay tay: python -m tests.grade_bai0b
 
 - profile_problem khong nhan gi tu dap an.
-- Dap an duoc tai vao mot thu muc TAM ngoai cache/ (download_with_cache ghi file + .etag ra dia), doc xong xoa ngay
-  trong finally. Cuoi script kiem tra cache/ khong co duong dan nao chua "answers" moi xuat hien.
+- Dap an doc qua r2.grader_download: thu muc TAM ngoai cache/ (file + .etag), xoa ngay khi doc xong.
+  Cuoi script kiem tra cache/ khong co duong dan nao chua "answers" moi xuat hien.
 - Khong ghi dap an vao output/ hay Ledger.
 """
 
 import json
-import shutil
 import sys
-import tempfile
-from pathlib import Path
 
 from profiling import quality
 from storage import r2
@@ -27,13 +24,9 @@ def _answers_in_cache():
 
 
 def load_answers():
-    """Tai dap an vao thu muc tam, doc, xoa thu muc tam (ke ca khi loi)."""
-    tmp = Path(tempfile.mkdtemp(prefix="grade_"))
-    try:
-        path = r2.download_with_cache(ANSWER_KEY, cache_dir=tmp, grader=True)
-        return json.loads(Path(path).read_text(encoding="utf-8"))
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    """Doc dap an qua r2.grader_download (thu muc tam ngoai cache/, xoa ngay ca khi loi)."""
+    with r2.grader_download(ANSWER_KEY) as path:
+        return json.loads(path.read_text(encoding="utf-8"))
 
 
 def expected_count(value):

@@ -54,14 +54,17 @@ def test_sub_question_key():
 # ---------- AnalysisPlan ----------
 
 PLAN = {"understanding": "Tính doanh thu theo nhóm",
-        "sub_questions": [{"key": "Q1", "question": "Lọc đơn"}, {"key": "Q2", "question": "Tổng", "depends_on": ["Q1"]}],
+        "requirements": ["Doanh thu theo nhóm"],
+        "sub_questions": [{"key": "Q1", "question": "Lọc đơn"},
+                          {"key": "Q2", "question": "Tổng", "depends_on": ["Q1"], "covers": [1]}],
         "assumptions": [ASSUMPTION],
         "proposed_ranges": [{"column": "T.amount", "min": 0, "reason": "không âm"}]}
 
 
 def test_plan_valid_and_cannot_answer():
     assert len(AnalysisPlan(**PLAN).sub_questions) == 2
-    p = AnalysisPlan(understanding="?", sub_questions=[], assumptions=[], cannot_answer_reason="thiếu cột ngày")
+    p = AnalysisPlan(understanding="?", requirements=["Doanh thu theo ngày"], sub_questions=[], assumptions=[],
+                     cannot_answer_reason="thiếu cột ngày")
     assert p.proposed_ranges == []
 
 
@@ -73,10 +76,24 @@ def test_plan_valid_and_cannot_answer():
     {"assumptions": [{**ASSUMPTION, "kind": "other"}]},
     {"proposed_ranges": [{"column": "T.x", "reason": "r"}]},
     {"extra": True},
+    {"requirements": []},                                                            # khong co yeu cau
+    {"requirements": ["Doanh thu theo nhóm", "Số đơn"]},                             # yeu cau 2 chua co cau hoi
+    {"sub_questions": [{"key": "Q1", "question": "a", "covers": [0]}]},              # chi so bat dau tu 1
+    {"sub_questions": [{"key": "Q1", "question": "a", "covers": [1, 2]}]},           # ngoai 1..n
 ])
 def test_plan_invalid(change):
     with pytest.raises(ValidationError):
         AnalysisPlan(**{**PLAN, **change})
+
+
+def test_plan_requirements_coverage():
+    plan = AnalysisPlan(**{**PLAN, "requirements": ["Doanh thu theo nhóm", "Số đơn"],
+                           "sub_questions": [{"key": "Q1", "question": "a", "covers": [1, 2]}]})
+    assert plan.sub_questions[0].covers == [1, 2]
+    with pytest.raises(ValidationError, match=r"yêu cầu \[2\] chưa có sub_question"):
+        AnalysisPlan(**{**PLAN, "requirements": ["Doanh thu theo nhóm", "Số đơn"]})
+    # co cannot_answer_reason: khong bat covers
+    AnalysisPlan(**{**PLAN, "requirements": ["x", "y"], "sub_questions": [], "cannot_answer_reason": "thiếu cột"})
 
 
 # ---------- AnalysisStep ----------

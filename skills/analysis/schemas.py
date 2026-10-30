@@ -42,10 +42,12 @@ class SubQuestion(_Model):
     key: str = Field(pattern=_KEY_RE.pattern)
     question: str = Field(min_length=1)
     depends_on: list[str] = Field(default_factory=list)
+    covers: list[int] = Field(default_factory=list)  # chi so (tu 1) trong AnalysisPlan.requirements
 
 
 class AnalysisPlan(_Model):
     understanding: str
+    requirements: list[str]  # cac yeu cau cua de (ngan); moi yeu cau phai co sub_question covers
     sub_questions: list[SubQuestion]
     assumptions: list[Assumption]
     proposed_ranges: list[ProposedRange] = Field(default_factory=list)
@@ -62,6 +64,19 @@ class AnalysisPlan(_Model):
             bad = [d for d in q.depends_on if d not in keys or d == q.key]
             if bad:
                 raise ValueError(f"{q.key}.depends_on tham chiếu key không hợp lệ: {bad}")
+        if self.cannot_answer_reason:
+            return self
+        n = len(self.requirements)
+        if n == 0 or any(not r.strip() for r in self.requirements):
+            raise ValueError("requirements cần ít nhất một yêu cầu không rỗng (hoặc điền cannot_answer_reason)")
+        for q in self.sub_questions:
+            bad = [i for i in q.covers if not 1 <= i <= n]
+            if bad:
+                raise ValueError(f"{q.key}.covers có chỉ số ngoài 1..{n}: {bad}")
+        covered = {i for q in self.sub_questions for i in q.covers}
+        missing = [i for i in range(1, n + 1) if i not in covered]
+        if missing:
+            raise ValueError(f"yêu cầu {missing} chưa có sub_question nào covers")
         return self
 
 
