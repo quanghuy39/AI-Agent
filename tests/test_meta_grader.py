@@ -179,3 +179,65 @@ def test_reasons_never_contain_masked_values(dirs):
     dumped = json.dumps(r.model_dump(), ensure_ascii=False)
     for value in (SECRET, "a@x.com", "b@x.com", "P2"):
         assert value not in dumped
+
+
+# ---------- khai bao join khong khop phep noi that ----------
+
+@pytest.fixture
+def join_dirs(tmp_path):
+    """CUSTOMER 5 khach; ORDER 12 don (moi khach co don co nhieu don, mot khach khong co don);
+    work/order_counts.csv: bang trung gian da gop (1 dong / khach co don)."""
+    inp, work = tmp_path / "input", tmp_path / "work"
+    inp.mkdir()
+    work.mkdir()
+    (inp / "CUSTOMER.csv").write_text("cid\n" + "".join(f"K{i}\n" for i in range(1, 6)), encoding="utf-8")
+    owners = ["K1"] * 4 + ["K2"] * 3 + ["K3"] * 3 + ["K4"] * 2  # K5 khong co don
+    (inp / "ORDER.csv").write_text("oid,cid\n" + "".join(f"O{i},{c}\n" for i, c in enumerate(owners)),
+                                   encoding="utf-8")
+    (work / "order_counts.csv").write_text("cid,n\nK1,4\nK2,3\nK3,3\nK4,2\n", encoding="utf-8")
+    return inp, work
+
+
+def join_meta(right, after):
+    return {"result_summary": {"n": 1}, "checks": [
+        custom(),
+        {"type": "row_count", "label": "noi khach", "before": 5, "after": after, "expect": "free"},
+        {"type": "join", "label": "khach-don", "left": "CUSTOMER.csv", "right": right,
+         "left_on": "cid", "right_on": "cid", "how": "left"},
+    ]}
+
+
+def test_join_declared_raw_table_but_real_join_keeps_rows(join_dirs):
+    # giong R3/R4 bai 1: noi that voi bang da gop (5 -> 5) nhung khai ORDER.csv tho
+    r = grade_meta(join_meta("ORDER.csv", 5), step(output_files=[]), *join_dirs)
+    assert not r.ok and len(r.structural_errors) == 1
+    err = r.structural_errors[0]
+    assert "check join 'khach-don' khai báo nối với ORDER.csv làm tăng lên 13 dòng" in err
+    assert "row_count cho thấy kết quả giữ 5 dòng" in err and "AGENT_OUTPUT_DIR" in err
+    assert by_name(r)["khach-don"]["status"] == "flag"  # check van duoc cham nhu cu
+    for value in ("K1", "K2", "O1"):
+        assert value not in err
+
+
+def test_join_declared_intermediate_file_ok(join_dirs):
+    r = grade_meta(join_meta("order_counts.csv", 5), step(output_files=["order_counts.csv"]), *join_dirs)
+    assert r.ok and r.structural_errors == []
+    assert "khóa trùng" not in by_name(r)["khach-don"]["reason"]  # 1 dong / khach: khong nhan ban
+
+
+def test_join_really_duplicates_rows_keeps_old_behaviour(join_dirs):
+    r = grade_meta(join_meta("ORDER.csv", 13), step(output_files=[]), *join_dirs)  # noi that 5 -> 13
+    assert r.ok and r.structural_errors == []
+    assert by_name(r)["khach-don"]["status"] == "flag" and "khóa trùng" in by_name(r)["khach-don"]["reason"]
+
+
+def test_join_without_matching_row_count_keeps_old_behaviour(join_dirs):
+    meta = join_meta("ORDER.csv", 5)
+    meta["checks"] = [c for c in meta["checks"] if c["type"] != "row_count"]
+    r = grade_meta(meta, step(output_files=[]), *join_dirs)
+    assert r.ok and r.structural_errors == [] and by_name(r)["khach-don"]["status"] == "flag"
+    # row_count co nhung khong khop so dong trai (vd. bang khac) -> cung khong doan
+    meta = join_meta("ORDER.csv", 5)
+    meta["checks"][1].update(before=12, after=12)
+    r = grade_meta(meta, step(output_files=[]), *join_dirs)
+    assert r.ok and r.structural_errors == []

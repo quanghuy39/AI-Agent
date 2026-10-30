@@ -2,7 +2,7 @@
 
 grade_meta(meta, step, input_dir, work_dir) -> GradeResult:
 - structural_errors: loi cau truc can AI sua (meta sai schema, thieu file khai bao, thieu check custom,
-  file/cot trong check khong co, check khong cham duoc). Co loi -> ok=False.
+  file/cot trong check khong co, check khong cham duoc, khai bao join khong khop phep noi that). Co loi -> ok=False.
 - checks: [{name, status, reason}] dung dinh dang Ledger.add_result (qua to_ledger_check).
 - flags: tom tat cac check status flag.
 reason/flags/structural_errors chi chua so dem, ten cot, ten file; KHONG chua gia tri du lieu (exception la
@@ -122,6 +122,21 @@ def _grade_check(check, input_dir, work_dir, cache):
     return r
 
 
+def _join_declaration_mismatch(check, result, all_checks):
+    """Khai bao join khong khop phep noi that: join_check du bao nhan ban dong (expected_rows > so dong trai)
+    nhung trong cung meta co row_count before = after = so dong trai (phep noi that giu nguyen so dong).
+    Khong co row_count nhu vay -> None (giu hanh vi cu: chi co). Chi dung so dem, ten file, label."""
+    details = result.get("details") or {}
+    n_left, expected = details.get("n_left"), details.get("expected_rows")
+    if n_left is None or expected is None or expected <= n_left:
+        return None
+    if not any(c.type == "row_count" and c.before == n_left and c.after == n_left for c in all_checks):
+        return None
+    return (f"check join '{check.label}' khai báo nối với {check.right} làm tăng lên {expected} dòng, nhưng row_count "
+            f"cho thấy kết quả giữ {n_left} dòng; nếu nối với bảng trung gian (đã gộp) thì ghi bảng đó vào "
+            f"AGENT_OUTPUT_DIR và khai file đó trong check join")
+
+
 def grade_meta(meta, step, input_dir, work_dir):
     """Cham meta cua mot buoc. Khong nem exception vi loi cua meta/du lieu; moi loi thanh structural_errors."""
     input_dir, work_dir = Path(input_dir), Path(work_dir)
@@ -152,6 +167,10 @@ def grade_meta(meta, step, input_dir, work_dir):
         except Exception as e:  # noqa: BLE001  khong de sap; chi ghi ten loi (thong bao co the chua gia tri)
             result = make_result(label, False, f"không chấm được: {type(e).__name__}")
             errors.append(f"check '{label}' ({c.type}) không chấm được: {type(e).__name__}")
+        if c.type == "join":
+            mismatch = _join_declaration_mismatch(c, result, parsed.checks)
+            if mismatch:
+                errors.append(mismatch)
         checks.append(to_ledger_check(result))
 
     flags = [f"{c['name']}: {c['reason']}" for c in checks if c["status"] == "flag"]

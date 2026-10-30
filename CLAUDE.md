@@ -40,6 +40,8 @@ python -m profiling.data_summary bai1 [--sensitive BANG.cot] [--max-chars N] [--
 python -m runner.run_code bai1 path\to\code.py [--step TEN] [--timeout GIAY]
 python -m analysis.loop bai1 [--sensitive BANG.cot] [--use-fake] [--max-retries 3] [--yes]
 python -m tests.grade_bai0b                           # chấm profiling bài 0b bằng answers/ (quyền grader)
+python -m tests.grade_bai0a                           # chấm kết quả bài 0a (quyền grader, đáp án qua grader_download, không ghi cache)
+python -m tests.grade_bai1                            # chấm bài 1 (như trên); đối chiếu theo từ khóa, LỆCH/CẦN NGƯỜI XEM cần người xem lại
 python tests/llm_eval/run_eval.py --list              # số case theo role
 python tests/llm_eval/run_eval.py --model <key> --role analysis [--limit N] [--resume] --yes   # GỌI API THẬT
 ```
