@@ -113,8 +113,8 @@ checks.append({"type": "sum", "label": "số đơn theo segment", "parts": [int(
     ),
     _value(
         "A04_date_range",
-        ("Trong quý 1 năm 2025 (01-01-2025 đến 31-03-2025, tính cả hai đầu), có bao nhiêu đơn và tổng amount "
-         "bao nhiêu (bỏ qua amount rỗng)?"),
+        ("Trong quý 1 năm 2025 (01-01-2025 đến 31-03-2025, tính cả hai đầu), cho biết số đơn (tính cả đơn thiếu "
+         "amount) và tổng amount (bỏ qua amount rỗng)."),
         {'n_orders': 53, 'total_amount': 4274.18},
         _ref(_code('''
 d = pd.to_datetime(orders["order_date"], format="%d-%m-%Y")

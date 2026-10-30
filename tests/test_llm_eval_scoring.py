@@ -224,6 +224,45 @@ def test_b_meta_details_structure_only(data_dir):
                        "structural_errors": [], "syntax_error_context": None}
 
 
+FRAME_READ = ('import os, json\nimport pandas as pd\nINPUT = os.environ["AGENT_INPUT_DIR"]\n'
+              'orders = pd.read_csv(os.path.join(INPUT, "orders.csv"), dtype=str)\n'
+              'customers = pd.read_csv(os.path.join(INPUT, "customers.csv"), dtype=str)\n')
+
+
+def test_b_invented_columns_not_on_summary_keys():
+    # A03: khoa result_summary la gia tri segment (nhan index cua Series, khoa dict) -> khong phai cot
+    code = FRAME_READ + ('c = customers.drop_duplicates()\nm = orders.merge(c, on="customer_id", how="inner")\n'
+                         'counts = m.groupby("segment")["order_id"].count()\n'
+                         'result = {}\nresult["Enterprise"] = int(counts["Enterprise"])\n'
+                         'summary = {"Retail": int(counts["Retail"])}\nx = summary["Retail"] + counts.loc["SMB"]\n'
+                         'print(os.environ["AGENT_META_PATH"])\n')
+    rep = static_check(code)
+    assert rep.unknown_columns == []
+    assert {"customer_id", "segment", "order_id"} <= rep.used_columns
+
+
+def test_b_invented_columns_columns_assignment():
+    # A10: cot tao bang X.columns = [...] / set_axis([...]) khong bi bao nham
+    code = FRAME_READ + ('done = orders[orders["status"] == "completed"].copy()\n'
+                         'cv = done.groupby("customer_id")["amount"].sum().reset_index()\n'
+                         'cv.columns = ["customer_id", "value"]\ntop = cv.loc[cv["value"].idxmax()]\n'
+                         'm = done.copy()\nm.columns = ["a", "b", "c", "d", "e", "f"]\nprint(m["a"], m.b)\n'
+                         'n = done.set_axis(["p", "q", "r", "s", "t", "u"], axis=1)\nprint(n["p"])\n')
+    assert static_check(code).unknown_columns == []
+
+
+def test_b_invented_columns_real_frame_still_flagged(data_dir):
+    code = FRAME_READ + ('df = orders.dropna(subset=["amount"])\nx = df["khong_co"]\n'
+                         'y = orders[orders["status"] == "x"].copy().cot_bia\n'
+                         'z = pd.merge(orders, customers, on="customer_id")["cot_ghep"]\n'
+                         'g = orders.groupby("channel")["revenue"]\n')
+    assert static_check(code).unknown_columns == ["cot_bia", "cot_ghep", "khong_co", "revenue"]
+    # bien vua la DataFrame vua bi gan dict -> khong xac dinh duoc, bo qua (luc chay van bat KeyError)
+    assert static_check(FRAME_READ + 't = orders.copy()\nt = {}\nt["khong_co"] = 1\nv = t["nua"]\n').unknown_columns == []
+    crit, why = score_case(CASES["A01_groupby_sum"], analysis(FRAME_READ + 'v = orders["khong_co"]\n'), data_dir)
+    assert crit["no_invented_columns"] is False and "khong_co" in why["no_invented_columns"]
+
+
 def test_b_syntax_error_context_masks_strings(data_dir):
     secret = "C0048"
     code = ('import os\n'

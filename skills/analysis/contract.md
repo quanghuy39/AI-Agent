@@ -29,6 +29,7 @@ Write one JSON object to os.environ["AGENT_META_PATH"] with:
   - {"type": "join", "label", "left", "right", "left_on", "right_on", "how": "left"|"inner"}
     (left/right are file names in the input or output directory; *_on is a column name or a list)
   - {"type": "custom", "name", "passed": bool, "reason"}
+- Convert numpy and pandas values with int(), float(), bool() or str() before json.dump.
 
 Required checks
 - Each item of can_be_wrong_if has at least one matching custom check.

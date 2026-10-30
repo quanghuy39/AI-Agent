@@ -16,6 +16,8 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import pandas as pd
+
 from analysis.meta_grader import GradeResult, grade_meta
 from runner import run_code as runner
 from tests.llm_eval.synth_data import KNOWN_COLUMNS
@@ -311,9 +313,77 @@ def _call_name(call):
     return ".".join(reversed(names))
 
 
-def _is_environ(node):
-    return isinstance(node, (ast.Attribute, ast.Name)) and (
-        getattr(node, "attr", None) == "environ" or getattr(node, "id", None) == "environ")
+
+# ---------- Bien DataFrame xac dinh duoc (cho no_invented_columns) ----------
+# Chi x["c"] / x.c voi x la DataFrame xac dinh duoc moi tinh la dung cot; Series, dict, nhan index hay bien
+# khong xac dinh duoc thi bo qua (cot bia that van bi bat qua KeyError luc chay).
+FRAME_METHODS = {
+    "merge", "join", "copy", "dropna", "drop_duplicates", "assign", "query", "sort_values", "fillna", "head",
+    "tail", "sample", "drop", "rename", "astype", "reset_index", "set_index", "filter", "nlargest", "nsmallest",
+    "where", "mask", "replace",
+}
+FRAME_FUNCS = {"merge", "concat"}  # pd.merge / pd.concat co it nhat mot doi so la DataFrame
+DATAFRAME_ATTRS = set(dir(pd.DataFrame))
+FRAME, GROUPBY = "frame", "groupby"
+
+
+class _Frames:
+    """Gan nhan "frame" (DataFrame) / "groupby" (DataFrameGroupBy) cho bieu thuc va ten bien. Mot ten la frame
+    chi khi MOI lan gan ten do deu la frame (gan bang dict, vong for, unpack... -> khong xac dinh)."""
+
+    def __init__(self, tree):
+        sites = {}  # ten -> [bieu thuc gan | None neu khong xac dinh]
+        direct = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for t in targets:
+                    if isinstance(t, ast.Name):
+                        sites.setdefault(t.id, []).append(node.value)
+                        direct.add(id(t))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and id(node) not in direct:
+                sites.setdefault(node.id, []).append(None)
+        self.names = {}
+        for _ in range(10):  # lap toi khi on dinh (bien phu thuoc bien khac)
+            new = {}
+            for name, values in sites.items():
+                kinds = {self.kind(v) if v is not None else None for v in values}
+                if len(kinds) == 1 and None not in kinds:
+                    new[name] = kinds.pop()
+            if new == self.names:
+                break
+            self.names = new
+
+    def kind(self, node):
+        if isinstance(node, ast.Name):
+            return self.names.get(node.id)
+        if isinstance(node, ast.Call):
+            name = _call_name(node)
+            last = name.rsplit(".", 1)[-1]
+            if last in READ_FUNCS and name.count(".") <= 1:
+                return FRAME
+            if isinstance(node.func, ast.Attribute):
+                base = self.kind(node.func.value)
+                if base == FRAME and last in FRAME_METHODS:
+                    return FRAME
+                if base == FRAME and last == "groupby":
+                    return GROUPBY
+                if base is None and last in FRAME_FUNCS and name.count(".") == 1 and any(
+                        self.kind(a) == FRAME for a in node.args + [k.value for k in node.keywords]):
+                    return FRAME
+            elif last in FRAME_FUNCS and any(self.kind(a) == FRAME for a in node.args):
+                return FRAME
+            return None
+        if isinstance(node, ast.Subscript):
+            value, sl = node.value, node.slice
+            if isinstance(value, ast.Attribute) and value.attr in ("loc", "iloc") and self.kind(value.value) == FRAME:
+                return None if isinstance(sl, ast.Tuple) else FRAME  # df.loc[mask] -> frame; df.loc[m, "c"] -> ?
+            if self.kind(value) == FRAME:
+                if isinstance(sl, ast.Constant):
+                    return None  # df["c"] -> Series
+                return FRAME     # df[["a", "b"]], df[mask]
+        return None
 
 
 @dataclass
@@ -339,6 +409,8 @@ def static_check(code):
         rep.parse_lineno = e.lineno
         return rep
 
+    frames = _Frames(tree)
+    call_funcs = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             rep.strings.add(node.value)
@@ -354,18 +426,25 @@ def static_check(code):
                 for a in node.names:
                     if a.name in FORBIDDEN_OS_CALLS:
                         rep.forbidden.append(f"from os import {a.name}")
-        elif isinstance(node, ast.Subscript) and not _is_environ(node.value):  # os.environ["AGENT_..."]: khong la cot
+        elif isinstance(node, ast.Subscript):
             keys = _strs(node.slice)
             if isinstance(node.ctx, ast.Store):
                 rep.created_columns.update(keys)
-            else:
+            elif frames.kind(node.value) in (FRAME, GROUPBY):  # df["c"], df.groupby(...)["c"]
                 rep.used_columns.update(keys)
-        elif isinstance(node, ast.Call):
-            _check_call(node, rep)
+        elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load) and id(node) not in call_funcs:
+            if node.attr not in DATAFRAME_ATTRS and frames.kind(node.value) == FRAME:  # df.c
+                rep.used_columns.add(node.attr)
+        elif isinstance(node, ast.Assign):
+            for t in node.targets:  # X.columns = [...]
+                if isinstance(t, ast.Attribute) and t.attr == "columns":
+                    rep.created_columns.update(_strs(node.value))
+        if isinstance(node, ast.Call):
+            _check_call(node, rep, frames)
     return rep
 
 
-def _check_call(node, rep):
+def _check_call(node, rep, frames):
     name = _call_name(node)
     last = name.rsplit(".", 1)[-1]
     if name in FORBIDDEN_BUILTINS or name == "importlib.import_module":
@@ -391,9 +470,11 @@ def _check_call(node, rep):
             rep.forbidden.append(f"{last}({path!r}) không qua AGENT_OUTPUT_DIR")
 
     # cot duoc dung / duoc tao
-    if last in COLUMN_METHODS:
+    if last in COLUMN_METHODS and isinstance(node.func, ast.Attribute) and frames.kind(node.func.value) == FRAME:
         for a in node.args[:1]:
             rep.used_columns.update(_strs(a))
+    if last == "set_axis" and node.args:
+        rep.created_columns.update(_strs(node.args[0]))
     for kw in node.keywords:
         if kw.arg in COLUMN_KWARGS:
             rep.used_columns.update(_strs(kw.value))
