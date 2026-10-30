@@ -9,6 +9,7 @@ Moi chuoi dua lai cho AI deu qua mask_text: gia tri that cua cot che -> [đã ch
 """
 
 import argparse
+import math
 import re
 import sys
 from dataclasses import dataclass, field
@@ -50,6 +51,7 @@ class Context:
     work_dir: Path                    # output/<task>/work/
     masked_values: set = field(default_factory=set, repr=False)
     decisions: list = field(default_factory=list)   # dong "- D1 [kind] text" da xac nhan
+    input_limit: int | None = None                  # max_input_tokens nho nhat cua chuoi analysis (nap lan dau)
     _mask_re: object = field(default=None, repr=False)
 
     def mask(self, text):
@@ -140,10 +142,56 @@ def confirm(question, yes=False, ask_user=input):
     return ask_user(f"{question} [y/n] ").strip().lower() in ("y", "yes", "c", "co", "có")
 
 
-def _ask(ctx, prompt_name, schema, **variables):
-    text = render_prompt(prompt_name, problem=ctx.mask(ctx.problem), data_summary=ctx.summary["text"],
+def _render(ctx, prompt_name, **variables):
+    """Render prompt; moi bien (tru data summary da che san) deu qua ctx.mask."""
+    return render_prompt(prompt_name, problem=ctx.mask(ctx.problem), data_summary=ctx.summary["text"],
                          **{k: ctx.mask(v) for k, v in variables.items()})
+
+
+def _call(ctx, text, schema):
     return llm.ask_model([{"role": "user", "content": text}], role=ROLE, json_schema=schema, task_id=ctx.task).data
+
+
+def _ask(ctx, prompt_name, schema, **variables):
+    return _call(ctx, _render(ctx, prompt_name, **variables), schema)
+
+
+# ---------- do dai prompt ----------
+
+def min_input_tokens(role=ROLE):
+    """max_input_tokens nho nhat trong chuoi fallback dang dung cua role (doc llm.yaml qua llm.client)."""
+    from llm import client  # cau hinh LLM: chi doc file, khong goi mang
+    cfg = client._load_config(client._config_path())
+    chain = client._active_chains(cfg).get(role) or [i["model"] for i in cfg["roles"][role]["chain"]]
+    return min(int(cfg["models"][m]["max_input_tokens"]) for m in chain)
+
+
+def estimate_tokens(text):
+    return math.ceil(len(text) / config.PROMPT_CHARS_PER_TOKEN) + config.PROMPT_SCHEMA_TOKENS
+
+
+def fit_prompt(render, variables, shortened, limit):
+    """Render prompt step va cat dan cho vua ngan sach = limit * (1 - PROMPT_MARGIN).
+
+    render(**variables) -> chuoi. shortened: ban rut gon cua "previous_results" va "confirmed_decisions".
+    Thu tu cat: (a) previous_results rut gon, (b) error_feedback con ANALYSIS_FEEDBACK_SHORT_CHARS ky tu cuoi,
+    (c) confirmed_decisions rut gon. Tra ve (text hoac None neu van vuot, info chi gom so lieu)."""
+    budget = int(limit * (1 - config.PROMPT_MARGIN))
+    text = render(**variables)
+    info = {"limit": limit, "budget": budget, "chars_before": len(text), "tokens_before": estimate_tokens(text),
+            "cut": []}
+    steps = [("previous_results", shortened["previous_results"]),
+             ("error_feedback", variables["error_feedback"][-config.ANALYSIS_FEEDBACK_SHORT_CHARS:]),
+             ("confirmed_decisions", shortened["confirmed_decisions"])]
+    current = dict(variables)
+    for name, value in steps:
+        if estimate_tokens(text) <= budget:
+            break
+        current[name] = value
+        info["cut"].append(name)
+        text = render(**current)
+    info.update(chars_after=len(text), tokens_after=estimate_tokens(text))
+    return (text if info["tokens_after"] <= budget else None), info
 
 
 def _add_confirmed(ctx, kind, text, required=True):
@@ -244,6 +292,40 @@ def _previous_results(ctx, results_by_key):
     return "\n".join(lines)
 
 
+def _short_previous(ctx, results_by_key):
+    """Ban rut gon: id, cau hoi, cac khoa result_summary, ten file trong work/."""
+    lines = [f"{r.id}: {r.question} | keys: {', '.join(r.result_summary) or '-'}" for r in ctx.ledger.results()]
+    files = sorted(p.relative_to(ctx.work_dir).as_posix() for p in ctx.work_dir.rglob("*") if p.is_file()) \
+        if ctx.work_dir.is_dir() else []
+    lines.append("Files in output directory: " + (", ".join(files) if files else "(none)"))
+    lines += [f"{key} -> {rid}" for key, rid in results_by_key.items()]
+    return "\n".join(lines)
+
+
+def _short_decisions(ctx):
+    n = config.ANALYSIS_DECISION_SHORT_CHARS
+    texts = [re.sub(r"^- D\d+ \[[^\]]*\] ", "- ", d) for d in ctx.decisions]
+    return "\n".join(t if len(t) <= n else t[:n - 1] + "…" for t in texts) or "(none)"
+
+
+def _step_prompt(ctx, q, results_by_key, feedback):
+    """Prompt step da che va cat cho vua model nho nhat; qua dai -> open_item + StopLoop (khong goi AI)."""
+    variables = {"confirmed_decisions": "\n".join(ctx.decisions) or "(none)",
+                 "previous_results": _previous_results(ctx, results_by_key),
+                 "question": f"{q.key}: {q.question}", "error_feedback": feedback}
+    shortened = {"previous_results": _short_previous(ctx, results_by_key), "confirmed_decisions": _short_decisions(ctx)}
+    if ctx.input_limit is None:
+        ctx.input_limit = min_input_tokens()
+    text, info = fit_prompt(lambda **v: _render(ctx, "step", **v), variables, shortened, ctx.input_limit)
+    ctx.ledger.log_event("analysis", "prompt_fit", inputs={"question": q.key},
+                         status="ok" if text is not None else "too_long", extra=info)
+    if text is None:
+        ctx.ledger.add_open_item(f"{q.key}: prompt quá dài so với model nhỏ nhất "
+                                 f"(~{info['tokens_after']} token > {info['budget']}).")
+        raise StopLoop(f"{q.key}: prompt quá dài so với model nhỏ nhất.")
+    return text
+
+
 def _next_result_id(ledger):
     return f"R{max((int(r.id[1:]) for r in ledger.results()), default=0) + 1}"
 
@@ -260,9 +342,7 @@ def solve_question(ctx, q, results_by_key, max_retries, yes, ask_user):
     step_name = f"{_next_result_id(ctx.ledger)}_{q.key}"
     feedback = ""
     for attempt in range(1, max_retries + 2):
-        step = _ask(ctx, "step", AnalysisStep, confirmed_decisions="\n".join(ctx.decisions) or "(none)",
-                    previous_results=_previous_results(ctx, results_by_key), question=f"{q.key}: {q.question}",
-                    error_feedback=feedback)
+        step = _call(ctx, _step_prompt(ctx, q, results_by_key, feedback), AnalysisStep)
         if step.cannot_answer_reason:
             ctx.ledger.add_open_item(f"{q.key}: AI báo không trả lời được: {step.cannot_answer_reason}")
             raise StopLoop(f"{q.key}: AI báo không trả lời được.")

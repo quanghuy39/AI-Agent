@@ -99,6 +99,13 @@ RUNNER_META_MAX_BYTES = 200_000      # file meta (AGENT_META_PATH) lon hon thi b
 ANALYSIS_MAX_RETRIES = 3             # so lan goi lai AI cho moi cau hoi sau lan dau
 ANALYSIS_FEEDBACK_STDERR_CHARS = 1500  # error_feedback chi giu chung nay ky tu cuoi cua stderr
 ANALYSIS_MASK_MIN_CHARS = 4          # gia tri cot che ngan hon thi khong thay (tranh thay nham)
+# Bao ve do dai prompt buoc giai: token ~ ky tu / PROMPT_CHARS_PER_TOKEN + PROMPT_SCHEMA_TOKENS (chi dan schema
+# ask_model gan them), so voi max_input_tokens nho nhat cua chuoi analysis, chua bien PROMPT_MARGIN.
+PROMPT_CHARS_PER_TOKEN = 3.4
+PROMPT_SCHEMA_TOKENS = 700
+PROMPT_MARGIN = 0.10
+ANALYSIS_FEEDBACK_SHORT_CHARS = 600  # khi phai cat: error_feedback chi giu chung nay ky tu cuoi
+ANALYSIS_DECISION_SHORT_CHARS = 100  # khi phai cat: moi decision chi giu text ngan chung nay ky tu
 # Cot che mac dinh theo bai (cong voi (SENSITIVE) trong dictionary va --sensitive); chi ap dung khi cot co that.
 ANALYSIS_DEFAULT_SENSITIVE = {"bai1": ["CUSTOMER.customer_id"]}
 # Module goc (phan truoc dau cham dau tien) bi cam import trong code AI.
