@@ -247,6 +247,32 @@ def read_meta(path):
 
 # ---------- ham chinh ----------
 
+def execute(code, input_dir, work_dir, run_dir, meta_path, timeout=None, result=None):
+    """Ham loi (lop 2 + 4): ghi run_dir/main.py roi chay voi cwd=run_dir, AGENT_INPUT_DIR/AGENT_OUTPUT_DIR/
+    AGENT_META_PATH tro toi cac duong dan da cho; doc meta khi chay tron. Khong quet tinh, khong cham R2,
+    khong chep ve, khong ghi log: nguoi goi lo thu muc (va don dep). Dien vao result (hoac RunResult moi)."""
+    timeout = config.RUNNER_TIMEOUT if timeout is None else timeout
+    result = RunResult(ok=False) if result is None else result
+    (Path(run_dir) / SCRIPT_NAME).write_text(code, encoding="utf-8")
+    start = time.perf_counter()
+    try:
+        proc = subprocess.run([sys.executable, "-X", "utf8", SCRIPT_NAME], cwd=run_dir,
+                              env=child_env(input_dir, work_dir, meta_path), capture_output=True,
+                              timeout=timeout)
+        result.returncode = proc.returncode
+        result.stdout, result.stderr = _decode(proc.stdout), _decode(proc.stderr)
+    except subprocess.TimeoutExpired as e:  # subprocess.run da kill tien trinh con
+        result.timed_out = True
+        result.stdout, result.stderr = _decode(e.stdout), _decode(e.stderr)
+        result.stderr += f"\n[runner] quá thời gian {timeout} giây, đã dừng tiến trình."
+    result.duration_sec = round(time.perf_counter() - start, 3)
+    result.stdout, result.stderr = _truncate(result.stdout), _truncate(result.stderr)
+    result.ok = result.returncode == 0 and not result.timed_out
+    if result.ok:  # chay hong thi khong tin meta: meta=None
+        result.meta, result.meta_error = read_meta(meta_path)
+    return result
+
+
 def run_code(code, task, step_name, timeout=None):
     """Chay code cua AI cho bai task. Tra ve RunResult (khong raise khi code loi/bi chan/qua gio)."""
     if not _TASK_RE.match(task or "") or task.lower() == "answers":
@@ -287,23 +313,9 @@ def run_code(code, task, step_name, timeout=None):
             result.input_hashes[rel] = _sha256(dst)
         input_dir.mkdir(exist_ok=True)
         shutil.copytree(real_work, work_dir)  # file trung gian cua cac buoc truoc
-        (run_dir / SCRIPT_NAME).write_text(code, encoding="utf-8")
 
         before = _snapshot(work_dir)
-        start = time.perf_counter()
-        try:
-            proc = subprocess.run([sys.executable, "-X", "utf8", SCRIPT_NAME], cwd=run_dir,
-                                  env=child_env(input_dir, work_dir, meta_path), capture_output=True,
-                                  timeout=timeout)
-            result.returncode = proc.returncode
-            result.stdout, result.stderr = _decode(proc.stdout), _decode(proc.stderr)
-        except subprocess.TimeoutExpired as e:  # subprocess.run da kill tien trinh con
-            result.timed_out = True
-            result.stdout, result.stderr = _decode(e.stdout), _decode(e.stderr)
-            result.stderr += f"\n[runner] quá thời gian {timeout} giây, đã dừng tiến trình."
-        result.duration_sec = round(time.perf_counter() - start, 3)
-        result.stdout, result.stderr = _truncate(result.stdout), _truncate(result.stderr)
-        result.ok = result.returncode == 0 and not result.timed_out
+        execute(code, input_dir, work_dir, run_dir, meta_path, timeout, result)
         if result.ok:  # chi chep ve khi chay tron; loi/qua gio thi file that giu nguyen, files_created rong
             changed = sorted(k for k, v in _snapshot(work_dir).items() if before.get(k) != v)
             for rel in changed:
@@ -311,7 +323,6 @@ def run_code(code, task, step_name, timeout=None):
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(work_dir / rel, dst)
             result.files_created = [str(real_work / rel) for rel in changed]
-            result.meta, result.meta_error = read_meta(meta_path)  # chay hong thi khong tin meta: meta=None
     finally:
         _rmtree(tmp)
     _log(task, step_name, code_path, result, "timeout" if result.timed_out else "ok" if result.ok else "error")
