@@ -11,9 +11,9 @@ Cập nhật: 30/10/2026. Nguồn: git log, code trong repo, tóm tắt cuối n
 | 3 | Xong | `ledger/` (hồ sơ bài ở `output/<bài>/`), usage log nối vào `run_log.jsonl`, Dockerfile build và chạy được. 238 test pass. |
 | 4 | Xong | `profiling/` (quality, dictionary, flags, relationships, data_summary), `validators/`, khoảng hợp lệ trong dictionary; `tests.grade_bai0b` đạt 5/5 lỗi cài sẵn. 476 test pass. |
 | 5 | Xong | Runner, skill phân tích, meta_grader, `analysis.loop`, fit_prompt, bộ kiểm định theo skill thật; chốt chuỗi analysis. Bài 0a ĐẠT toàn bộ; bài 1 chạy trọn 4 câu, số liệu đúng, phán đoán BI chưa đạt. 645 test pass. |
-| 6 | Đang làm | Mục 1 đến 5 đã commit; mục 6 đã chuẩn bị xong, chưa chạy bài 2 (chưa commit): điều phối theo pha, chạy tiếp được, `--fake` tách hồ sơ, điểm dừng xác nhận, decision chờ xác nhận, cờ chất lượng thành decision, `context_builder`, đồng bộ hồ sơ lên R2, 5 quy tắc chung trong prompt, `tests.grade <bài>`, sửa `--restart` cho decision. 858 test pass. Còn lại: chạy và chấm bài 2. Phạm vi đầy đủ: chưa xác nhận. |
-| 7 | Chưa | Chưa xác nhận (thư mục `report/`, `slides/` mới có `__init__.py`). |
-| 8 | Chưa | Chưa xác nhận (ghi chú: `LLM_CONFIG_PATH` kiểu Windows không dùng được trong container). |
+| 6 | Xong | Điều phối theo pha, chạy tiếp được, `--fake` tách hồ sơ, điểm dừng xác nhận, decision pending và superseded, cờ chất lượng thành decision, `context_builder`, đồng bộ hồ sơ lên R2, 5 quy tắc chung trong prompt, `tests.grade <bài>`. Bài 2 chạy thật: số tổng hợp khớp, phán đoán BI chưa đạt. 858 test pass. |
+| 7 | Chưa | Phạm vi chưa xác nhận (thư mục `report/`, `slides/` mới có `__init__.py`). Xem "Lưu ý Ngày 7". |
+| 8 | Chưa | Phạm vi chưa xác nhận. Xem "Lưu ý Ngày 8". |
 
 ## Ngày 5
 
@@ -67,7 +67,44 @@ Cập nhật: 30/10/2026. Nguồn: git log, code trong repo, tóm tắt cuối n
 
 ## Ngày 6
 
-Mục 1, điều phối theo pha (chưa commit, mới kiểm bằng FakeLLM và R2 giả, chưa chạy bài thật):
+Làm trong 2 buổi. Kết quả bài 2 và đánh giá phán đoán BI ở dưới theo tổng kết của người dùng.
+
+Đã xong (858 test pass):
+- Điều phối theo pha ở `main.py`: `state.json`, chạy tiếp từ pha đang dở, `--restart`, `--fake` ghi vào `output/_fake/`.
+- Điểm dừng xác nhận; decision pending và superseded; cờ chất lượng thành decision theo `source_key`.
+- `context_builder.py` ở gốc dự án cho cả understand, plan, step.
+- Đồng bộ hồ sơ lên R2 (`storage/sync.py`).
+- Chạy bài 2 thật, chấm bằng `tests.grade`.
+
+Thay đổi so với kế hoạch:
+- Ngày 6 làm 2 buổi.
+- Hồ sơ thêm `state.json`, là file thứ 8.
+- Ước lượng token dùng ký tự / 3,4 (đo thật lệch khoảng 1%) thay cho ký tự / 4.
+- `context_builder.py` đặt ở gốc dự án.
+- 5 quy tắc chung thêm vào prompt TRƯỚC khi chạy bài 2.
+- Công cụ chấm tổng quát `tests.grade <bài>`.
+
+Kết quả bài 2:
+- Số tổng hợp theo kênh, chiến dịch, `cost_tier` khớp đáp án.
+- Phán đoán BI chưa đạt:
+  - Không kiểm định thống kê nhưng vẫn ghi mức chắc chắn "Cao".
+  - Không phát hiện khoảng 36% touchpoint xảy ra trước ngày đăng ký.
+  - Quy tắc 2 và 3 (nhãn so với hành vi, kỳ trọn vẹn) không có tác dụng.
+  - AI xếp quyết định BI (cửa sổ quy đơn 30 ngày, ngưỡng ngân sách) vào kind `assumption`, nên chỉ được duyệt gộp.
+- Hai lần chạy cùng câu cho cách tính khác nhau: model không ổn định giữa các lần chạy.
+- Hồ sơ `bai2` hiện tại được tạo trước khi sửa `--restart` cho decision: 5 kết quả superseded, 5 valid, nhưng 18 decision
+  đều confirmed, gộp cả hai lần chạy.
+
+Bài học cần chuyển thành CODE, không thêm lời nhắc vào prompt:
+- (a) Phép kiểm cố định "so sánh nhóm phải kèm kiểm định": code đòi kết quả kiểm định trước khi cho ghi mức chắc chắn, có
+  xử lý nhiều phép so sánh.
+- (b) Profiling thêm kiểm thứ tự thời gian giữa các bảng (sự kiện trước ngày đăng ký) và kỳ dữ liệu trọn vẹn.
+- (c) Mọi decision required hỏi riêng từng cái, không duyệt gộp theo kind.
+- (d) `tests.grade` bỏ qua file dữ liệu dòng chi tiết khi dò "số gần nhất" (đang gây LỆCH giả).
+
+Chi tiết từng mục:
+
+Mục 1, điều phối theo pha:
 - `main.py`: `python main.py <bài> [--sensitive BANG.cot] [--restart] [--yes] [--fake]`, máy trạng thái understand →
   explore → plan → loop → synthesize → done, ghi `state.json` sau mỗi pha (phase, plan, sensitive, updated_at).
   `python -m analysis.loop` chỉ gọi vào luồng này.
@@ -97,8 +134,7 @@ Mục 1, điều phối theo pha (chưa commit, mới kiểm bằng FakeLLM và 
 - Dictionary bài 1 (bản trong `cache/input/bai1/`) không có thẻ `(SENSITIVE)`: `CUSTOMER.customer_id` chỉ có `(PK)`. Cột
   này được che nhờ `config.ANALYSIS_DEFAULT_SENSITIVE`; `ORDER.customer_id` che theo quan hệ.
 
-Mục 2 + 3, điểm dừng và decision chờ xác nhận (chưa commit, kiểm bằng FakeLLM, R2 giả và `main.py --fake` trên `bai0a`;
-chưa chạy với AI thật):
+Mục 2 + 3, điểm dừng và decision chờ xác nhận:
 - Giả định của kế hoạch, khoảng hợp lệ và cờ mức flag được ghi `pending` vào `decisions.json` TRƯỚC khi hỏi; `_add_confirmed`
   đã tách thành `_add_pending` và `_confirm_decision`. `pending_required()` còn mục thì không vào pha loop
   (`require_confirmed`); chạy tiếp chỉ hỏi phần còn pending, kể cả decision còn lại khi đang ở pha loop.
@@ -132,7 +168,7 @@ chưa chạy với AI thật):
 - Số cờ theo hồ sơ hiện có (flag/info): bai0a 0/0, bai0b 7/2, bai1 0/3, bai2 0/6. Bài 1, 2 đi qua câu hỏi giữ nguyên dữ
   liệu; bai0a in "Không có bất thường"; đường cờ flag thành decision chưa có bài thật nào ngoài bai0b để hỏi.
 
-Mục 4, `context_builder` (chưa commit, kiểm bằng FakeLLM và R2 giả; chưa chạy với AI thật):
+Mục 4, `context_builder`:
 - `context_builder.py` ở gốc dự án: chuyển `fit_prompt`, `estimate_tokens`, `min_input_tokens` từ `analysis/loop.py` sang,
   tổng quát theo role. Ngân sách = `max_input_tokens` nhỏ nhất của chuỗi role, trừ biên 10%: analysis 8.100, report và
   slide 4.500 token. Giữ ước lượng ký tự / 3,4 + 700 (token thật bài 1 cao hơn ước lượng khoảng 1%).
@@ -161,7 +197,7 @@ Mục 4, `context_builder` (chưa commit, kiểm bằng FakeLLM và R2 giả; ch
   | step, chưa có kết quả | ~4.128 | ~4.560 |
   | step, đủ hồ sơ hiện có | ~4.753 | ~4.568 (bai2 chưa có kết quả) |
 
-Mục 5, đồng bộ hồ sơ lên R2 (chưa commit, kiểm bằng R2 giả và `--dry-run` trên `bai0a`, `bai1`; chưa tải thật lần nào):
+Mục 5, đồng bộ hồ sơ lên R2:
 - `storage/sync.py`: tải toàn bộ `output/<bài>/` (kể cả `work/_superseded/`, trừ file tạm của Ledger) lên
   `R2_OUTPUT_PREFIX + <bài>/` qua `r2.upload_file`, hàm này dùng đúng token `R2_WRITE_*`. Không xóa gì trên R2.
 - Từ chối bằng code, kể cả gọi tay: `_fake` (tên bài hoặc đang ở `fake_output`), tên bài sai, prefix cấu hình sai (rỗng,
@@ -175,7 +211,7 @@ Mục 5, đồng bộ hồ sơ lên R2 (chưa commit, kiểm bằng R2 giả và
   tên lỗi). Lỗi một file thì tải tiếp file khác; mất kết nối thì dừng lượt đó để không chờ timeout từng file.
 - `python -m storage.sync <bài> [--dry-run]`: mã 0 xong, 1 có file lỗi, 2 bị từ chối.
 
-Mục 6, chuẩn bị chạy bài 2 (chưa commit, chưa chạy bài 2):
+Mục 6, chuẩn bị chạy bài 2:
 - 5 quy tắc chung được thêm vào prompt TRƯỚC khi chạy bài 2; bài 2 là bài kiểm tra chưa thấy, nên kết quả bài 2 đo được
   các quy tắc này có tác dụng hay không. Quy tắc viết chung, không nhắc tên bài, bảng, cột, con số hay lĩnh vực.
 - Kết quả kiểm định analysis Ngày 5 đo trên prompt cũ, chưa chạy lại.
@@ -185,12 +221,11 @@ Mục 6, chuẩn bị chạy bài 2 (chưa commit, chưa chạy bài 2):
 - Prompt plan khi chưa điền biến còn 5.993 ký tự, sát trần 6.000 của `test_prompt_lengths`.
 - Kích thước ước lượng bài 2 (cách đo như mục 4, đã che `CUSTOMER.customer_id`, ngân sách 8.100 token): plan ~4.694 thành
   ~4.805, step chưa có kết quả ~4.583 thành ~4.718.
-- `python -m tests.grade <bài>` dùng chung cho mọi bài; `python -m tests.grade_bai1` gọi vào đó. Mới kiểm bằng R2 giả
-  (`tests/test_grade.py`), chưa chạy với `answers/` thật sau khi tách.
+- `python -m tests.grade <bài>` dùng chung cho mọi bài; `python -m tests.grade_bai1` gọi vào đó.
 - Chạy bài 2 lần đầu phải có `--sensitive CUSTOMER.customer_id`: `ANALYSIS_DEFAULT_SENSITIVE` không có bài 2, dictionary
   không có thẻ `(SENSITIVE)`, không truyền thì bản tóm tắt lộ mã khách.
 
-Sửa `--restart` (chưa commit, kiểm bằng FakeLLM và R2 giả; hồ sơ `bai2` thật chưa chạy lại). Lỗi: `--restart` chỉ đổi kết
+Sửa `--restart` (kiểm bằng FakeLLM và R2 giả; hồ sơ `bai2` thật chưa chạy lại). Lỗi: `--restart` chỉ đổi kết
 quả, decision cũ vẫn confirmed nên được dùng lại theo `source_key` (D1, D3 `bai2` không được hỏi lại) và vẫn gửi cho AI.
 - `DecisionStatus` thêm `superseded`; hồ sơ cũ vẫn đọc được. `Ledger.active_decisions()` bỏ superseded; `decisions()` vẫn
   trả đủ để đối chiếu.
@@ -200,14 +235,6 @@ quả, decision cũ vẫn confirmed nên được dùng lại theo `source_key` 
   danh sách gửi AI và câu hỏi lọc theo pending/confirmed nên tự bỏ superseded. Decision superseded không xác nhận lại được.
 - `tests/grade.py` bỏ decision superseded khi đối chiếu bẫy, để decision của lần làm trước không tính là ĐÃ NÊU.
 - Thay hành vi cũ: `--restart` trước đây giữ nguyên decisions và không hỏi lại. 5 test cũ khóa hành vi đó đã sửa theo.
-
-## Bài học chung cho Ngày 6
-Không viết riêng cho bài 1; đã thành 5 quy tắc trong prompt (mục 6), đo trên bài 2.
-- So sánh giữa các nhóm phải nêu độ lớn khác biệt và mức chắc chắn.
-- Kiểm tra định nghĩa cột nhãn trước khi dùng.
-- Kiểm tra kỳ dữ liệu có trọn vẹn.
-- Xem xét ngoại lai.
-- Check custom phải kiểm đúng rủi ro đã nêu.
 
 ## Quyết định đã chốt
 - Prompt analysis trong `skills/analysis/` là nguồn duy nhất cho cả bộ kiểm định lẫn agent: kiểm định đo đúng
@@ -227,10 +254,33 @@ Không viết riêng cho bài 1; đã thành 5 quy tắc trong prompt (mục 6),
   trong chuỗi. Lý do: bật `true` thì chuỗi report/slide rỗng (chưa model nào validated) và `ask_model` báo
   `LLMConfigError`. Nội dung chính xác của mục 6.7 nằm trong tài liệu thiết kế ngoài repo (chưa đối chiếu nguyên văn).
 
+## Lưu ý Ngày 7
+- Chuỗi report/slide có trần groq 5.000 token (ngân sách 4.500), nhỏ hơn prompt cỡ `step`, nên khi dùng lại ngữ cảnh này
+  sẽ phải cắt. Prompt report/slide chưa viết.
+- Pha synthesize mới là khung.
+- `findings.json` không superseded khi `--restart`: phát hiện của kết quả cũ còn nguyên, `tests/grade.py` vẫn đối chiếu
+  với chúng.
+
+## Lưu ý Ngày 8
+- Thêm thẻ `(SENSITIVE)` cho `CUSTOMER.customer_id` trong dictionary `bai1`, `bai2` trên R2, rồi bỏ
+  `ANALYSIS_DEFAULT_SENSITIVE`.
+- `docker build` chưa chạy lại sau Ngày 6.
+- `LLM_CONFIG_PATH` kiểu Windows không dùng được trong container.
+- R2 `output/<bài>/work/` còn file cũ của lần chạy trước `--restart` (đồng bộ không xóa): cần xử lý nếu tải hồ sơ từ R2 về.
+- Manifest đồng bộ chỉ ở máy này: máy khác hoặc container mới sẽ tải lại toàn bộ; object bị xóa tay trên R2 không được tải
+  lại cho tới khi file đổi.
+- Chạy lại kiểm định analysis vì prompt đã đổi.
+- Hồ sơ thật `bai0a` đang có state demo cũ ở phase `loop` (`problem.json` cũng là bản demo, kèm open_item O2 "hết hạn mức"
+  sinh ra từ báo sai): chạy thật phải dùng `python main.py bai0a --restart`.
+
+## Backlog
+- `data_profile.json` chứa dòng mẫu thô, kể cả cột che, và được đồng bộ lên `output/` của bucket: cần bỏ trước khi dùng dữ
+  liệu công ty hoặc chia sẻ output.
+- `runner.OUTPUT_DIR` và `quality.OUTPUT_DIR` đang đổi tạm biến toàn cục cho `--fake`; nên truyền tham số.
+- Open_item không tự đóng hết.
+- Mức thận trọng chỉ có `chuan`.
+
 ## Giới hạn và việc để sau (Ngày 6 trở đi)
-- Prompt report/slide chưa viết (Ngày 7). Trần 5.000 token của chuỗi report/slide (ngân sách 4.500) nhỏ hơn prompt cỡ
-  `step` hiện nay, nên khi dùng lại ngữ cảnh này sẽ phải cắt.
-- Kết quả kiểm định Ngày 5 đo trên `step.md` trước khi thêm mục bản diễn giải; prompt nay dài thêm một mục ngắn.
 - `tests/grade.py` đối chiếu theo từ khóa: LỆCH, CẦN NGƯỜI XEM và đánh giá bẫy cần người xem lại (hai mục bẫy
   script chấm ĐÃ NÊU thực ra là trùng từ).
 - Ước lượng token đang dùng số ký tự / 3,4 (`PROMPT_CHARS_PER_TOKEN`) + 700 cho chỉ dẫn schema.
@@ -244,18 +294,10 @@ Không viết riêng cho bài 1; đã thành 5 quy tắc trong prompt (mục 6),
 - Báo cáo cũ gắn `source_key` theo ngưỡng mặc định vì báo cáo không lưu ngưỡng đã dùng (`--set` lúc profiling).
 - Hồ sơ `bai1` tạo trước Ngày 6 không có `state.json` và `question_key`: lần chạy đầu giải lại mọi câu, kết quả cũ vẫn
   valid (có in cảnh báo); nên dùng `--restart`.
-- LƯU Ý hồ sơ thật `bai0a`: `state.json` đang chứa kế hoạch demo ở phase `loop` (`problem.json` cũng là bản demo, tạo từ
-  `--fake` trước khi có `output/_fake/`), kèm open_item O2 "hết hạn mức" sinh ra từ báo sai. Lần chạy thật đầu tiên phải
-  dùng `python main.py bai0a --restart`.
-- `--restart` không đổi `findings.json`: phát hiện của kết quả cũ còn nguyên, và `tests/grade.py` vẫn đối chiếu với chúng.
 - Bài đã `done` thì chạy lại chỉ báo xong, không đối chiếu `--sensitive`.
 - Hạn mức: Gemini 3.8 Flash 20 lượt/ngày, OpenRouter 50 lượt/ngày (`config/llm.yaml`).
-- Chưa `docker build` lại sau khi thêm `COPY analysis/` và `context_builder.py`.
 - Đồng bộ R2: sự kiện `sync` tự làm đổi `run_log.jsonl`, nên mỗi lượt sau luôn tải lại file này, và dòng log của lượt cuối
   chỉ lên R2 ở lần chạy sau. Với `--yes` không có câu hỏi nên chỉ đồng bộ khi kết thúc.
-- Đồng bộ R2 không xóa nên sau `--restart` khóa `work/` cũ vẫn còn trên R2 cho tới khi bị ghi đè. Manifest chỉ ở máy này:
-  máy khác hoặc container mới sẽ tải lại toàn bộ; object bị xóa tay trên R2 không được tải lại cho tới khi file đổi.
-- `output/<bài>/data_profile.json` có bản ghi mẫu thô, kể cả cột che; đồng bộ đưa file này lên `output/` của bucket.
 - `requirements.txt` hiện không có scipy (tóm tắt Ngày 1 có nhắc scipy): chưa xác nhận có cần không.
 - Dictionary bài 1, 2 nhắc bảng EXTERNAL_FACTOR, PRICE_CHANGE không có trong dữ liệu.
 - Kiểm định report/slide (dùng `--resume`), rồi đánh `validated: true` cho model qua ngưỡng.

@@ -19,10 +19,12 @@ Trạng thái từng ngày: xem `PROGRESS.md`.
   `relationships.py`, `data_summary.py` (bản tóm tắt đã che cho AI).
 - `validators/` – `rows.py`, `join.py`, `sums.py`, `ranges.py`, `result.py` (row_count/join/sum/range check).
 - `ledger/` – `schema.py`, `ledger.py`: hồ sơ bài ở `output/<bài>/` (results, decisions, findings, open_items,
-  data_profile, problem, state, run_log.jsonl; file của lần làm trước ở `work/_superseded/<thời điểm>/`).
+  data_profile, problem, state, run_log.jsonl; file của lần làm trước ở `work/_superseded/<thời điểm>/`). Decision có
+  status pending, confirmed, superseded; code dùng `active_decisions()`, `decisions()` trả cả superseded để đối chiếu.
 - `runner/run_code.py` – chạy code AI: thư mục tạm, input chỉ đọc, bỏ biến bí mật, quét ast, timeout, meta.
 - `main.py` – luồng duy nhất: máy trạng thái understand → explore → plan → loop → synthesize → done, lưu `state.json`
-  sau mỗi pha, chuyển exception thành mã thoát (`exit_code_for`).
+  sau mỗi pha, chuyển exception thành mã thoát (`exit_code_for`). `--fake` ghi hồ sơ vào `output/_fake/<bài>/`, không
+  đụng hồ sơ thật, không đồng bộ R2.
 - `context_builder.py` – dựng prompt vừa ngân sách token theo role (`build_prompt`, `fit_prompt`, `min_input_tokens`,
   `estimate_tokens`): `PROMPT_CUTS` khai báo phần cắt được và thứ tự cắt, bậc cuối thu nhỏ data summary bằng
   `build_data_summary`. Mọi prompt gửi AI phải đi qua đây; đề gốc, câu hỏi hiện tại, contract không bao giờ cắt.
