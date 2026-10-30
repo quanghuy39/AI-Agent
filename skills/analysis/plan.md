@@ -26,6 +26,10 @@ $contract
    - anomaly_handling: what to do with data problems listed in the data summary flags. When it handles one flag,
      copy that flag's [key: ...] value into flag_key.
    Set required=true when the answer changes materially with the choice.
+   Status or label column defining a metric: compare the label with the behavior in the data before using it; if they
+   disagree, add a required assumption.
+   Time period: find the period the data actually covers. Exclude an incomplete first or last period from comparisons
+   over time, or add a required assumption.
 4. proposed_ranges: for numeric columns you will use that have no "valid range" in the data summary,
    propose a plausible range ("TABLE.column", min and/or max, reason). Skip columns that already have one.
 5. If the data cannot answer the problem, fill cannot_answer_reason and leave sub_questions empty.

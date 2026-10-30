@@ -32,7 +32,7 @@ Trạng thái từng ngày: xem `PROGRESS.md`.
   AnalysisPlan, AnalysisStep, AgentMeta), `__init__.py` (load_prompt, render_prompt).
 - `report/`, `slides/` – mới có `__init__.py` (chưa làm).
 - `templates/data_dictionary_template.md` – mẫu data dictionary.
-- `tests/` – pytest `test_*.py`; script chạy tay (`grade_bai0b.py`, `try_ask_model.py`, `list_models.py`,
+- `tests/` – pytest `test_*.py`; script chạy tay (`grade.py`, `grade_bai0b.py`, `try_ask_model.py`, `list_models.py`,
   `probe_*.py`, `make_*.py`); `tests/llm_eval/` bộ kiểm định model (cases, scoring, run_eval, summary, thresholds.yaml).
 - `Dockerfile` – python:3.12-slim, chạy `main.py`.
 - Không lên git: `.env`, `.venv/`, `cache/`, `output/`, `test_data/`, `tests/llm_eval/results/`.
@@ -51,7 +51,8 @@ python -m analysis.loop bai1 [--sensitive BANG.cot] [--use-fake] [--max-retries 
 python -m storage.sync bai1 [--dry-run]               # đồng bộ hồ sơ lên R2; --dry-run chỉ in số file, không ghi gì
 python -m tests.grade_bai0b                           # chấm profiling bài 0b bằng answers/ (quyền grader)
 python -m tests.grade_bai0a                           # chấm kết quả bài 0a (quyền grader, đáp án qua grader_download, không ghi cache)
-python -m tests.grade_bai1                            # chấm bài 1 (như trên); đối chiếu theo từ khóa, LỆCH/CẦN NGƯỜI XEM cần người xem lại
+python -m tests.grade bai1                            # chấm một bài (như trên); đối chiếu theo từ khóa, LỆCH/CẦN NGƯỜI XEM cần người xem lại
+python -m tests.grade_bai1                            # giống python -m tests.grade bai1
 python tests/llm_eval/run_eval.py --list              # số case theo role
 python tests/llm_eval/run_eval.py --model <key> --role analysis [--limit N] [--resume] --yes   # GỌI API THẬT
 ```
@@ -70,7 +71,7 @@ Lọc output tiếng Việt bằng `Select-String` cần `[Console]::OutputEncod
    Không dùng `litellm.Router`, không dùng tool calling: đầu ra AI là JSON kiểm bằng pydantic.
 2. AI viết code và quyết định "làm gì"; code (runner + validators) tính mọi con số. Không để AI gõ số.
 3. Dữ liệu nguồn chỉ đọc (runner chép ra thư mục tạm, đặt chỉ đọc).
-4. Không đọc `answers/` trong code của agent; chỉ `tests/grade_*.py` được đọc qua quyền grader (`grader=True`).
+4. Không đọc `answers/` trong code của agent; chỉ `tests/grade.py` và `tests/grade_*.py` được đọc qua quyền grader (`grader=True`).
 5. Khóa API và R2 chỉ ở `.env`: không in, không commit, không đưa vào prompt, log hay tài liệu.
 6. AI không nhận dữ liệu thô, chỉ bản tóm tắt (`ai_summary` / `build_data_summary`) đã che cột nhạy cảm.
 7. Prompt nằm trong file `.md` (vd. `skills/analysis/*.md`), không viết cứng trong code.

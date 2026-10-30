@@ -11,7 +11,7 @@ Cập nhật: 30/10/2026. Nguồn: git log, code trong repo, tóm tắt cuối n
 | 3 | Xong | `ledger/` (hồ sơ bài ở `output/<bài>/`), usage log nối vào `run_log.jsonl`, Dockerfile build và chạy được. 238 test pass. |
 | 4 | Xong | `profiling/` (quality, dictionary, flags, relationships, data_summary), `validators/`, khoảng hợp lệ trong dictionary; `tests.grade_bai0b` đạt 5/5 lỗi cài sẵn. 476 test pass. |
 | 5 | Xong | Runner, skill phân tích, meta_grader, `analysis.loop`, fit_prompt, bộ kiểm định theo skill thật; chốt chuỗi analysis. Bài 0a ĐẠT toàn bộ; bài 1 chạy trọn 4 câu, số liệu đúng, phán đoán BI chưa đạt. 645 test pass. |
-| 6 | Đang làm | Mục 1 đến 5 xong (chưa commit): điều phối theo pha, chạy tiếp được, `--fake` tách hồ sơ, điểm dừng xác nhận, decision chờ xác nhận, cờ chất lượng thành decision, `context_builder`, đồng bộ hồ sơ lên R2. 842 test pass. Còn lại theo ghi chú: thêm các bài học ở mục "Bài học chung cho Ngày 6". Phạm vi đầy đủ: chưa xác nhận. |
+| 6 | Đang làm | Mục 1 đến 5 đã commit; mục 6 đã chuẩn bị xong, chưa chạy bài 2 (chưa commit): điều phối theo pha, chạy tiếp được, `--fake` tách hồ sơ, điểm dừng xác nhận, decision chờ xác nhận, cờ chất lượng thành decision, `context_builder`, đồng bộ hồ sơ lên R2, 5 quy tắc chung trong prompt, `tests.grade <bài>`. 852 test pass. Còn lại: chạy và chấm bài 2. Phạm vi đầy đủ: chưa xác nhận. |
 | 7 | Chưa | Chưa xác nhận (thư mục `report/`, `slides/` mới có `__init__.py`). |
 | 8 | Chưa | Chưa xác nhận (ghi chú: `LLM_CONFIG_PATH` kiểu Windows không dùng được trong container). |
 
@@ -175,8 +175,23 @@ Mục 5, đồng bộ hồ sơ lên R2 (chưa commit, kiểm bằng R2 giả và
   tên lỗi). Lỗi một file thì tải tiếp file khác; mất kết nối thì dừng lượt đó để không chờ timeout từng file.
 - `python -m storage.sync <bài> [--dry-run]`: mã 0 xong, 1 có file lỗi, 2 bị từ chối.
 
+Mục 6, chuẩn bị chạy bài 2 (chưa commit, chưa chạy bài 2):
+- 5 quy tắc chung được thêm vào prompt TRƯỚC khi chạy bài 2; bài 2 là bài kiểm tra chưa thấy, nên kết quả bài 2 đo được
+  các quy tắc này có tác dụng hay không. Quy tắc viết chung, không nhắc tên bài, bảng, cột, con số hay lĩnh vực.
+- Kết quả kiểm định analysis Ngày 5 đo trên prompt cũ, chưa chạy lại.
+- Chỉ thêm vào prompt: không sửa `meta_grader`, không có phép kiểm bằng code, nên AI bỏ qua quy tắc thì không có gì bắt lại.
+- `plan.md`: cột nhãn hoặc trạng thái, kỳ dữ liệu. Bước plan không chạy code, nên chỉ đối chiếu được trên bản tóm tắt.
+- `step.md`: so sánh nhóm, ngoại lai. `contract.md`: check custom đo trực tiếp rủi ro, không thay bằng check đếm dòng.
+- Prompt plan khi chưa điền biến còn 5.993 ký tự, sát trần 6.000 của `test_prompt_lengths`.
+- Kích thước ước lượng bài 2 (cách đo như mục 4, đã che `CUSTOMER.customer_id`, ngân sách 8.100 token): plan ~4.694 thành
+  ~4.805, step chưa có kết quả ~4.583 thành ~4.718.
+- `python -m tests.grade <bài>` dùng chung cho mọi bài; `python -m tests.grade_bai1` gọi vào đó. Mới kiểm bằng R2 giả
+  (`tests/test_grade.py`), chưa chạy với `answers/` thật sau khi tách.
+- Chạy bài 2 lần đầu phải có `--sensitive CUSTOMER.customer_id`: `ANALYSIS_DEFAULT_SENSITIVE` không có bài 2, dictionary
+  không có thẻ `(SENSITIVE)`, không truyền thì bản tóm tắt lộ mã khách.
+
 ## Bài học chung cho Ngày 6
-Không viết riêng cho bài 1; đo trên bài 2.
+Không viết riêng cho bài 1; đã thành 5 quy tắc trong prompt (mục 6), đo trên bài 2.
 - So sánh giữa các nhóm phải nêu độ lớn khác biệt và mức chắc chắn.
 - Kiểm tra định nghĩa cột nhãn trước khi dùng.
 - Kiểm tra kỳ dữ liệu có trọn vẹn.
@@ -205,7 +220,7 @@ Không viết riêng cho bài 1; đo trên bài 2.
 - Prompt report/slide chưa viết (Ngày 7). Trần 5.000 token của chuỗi report/slide (ngân sách 4.500) nhỏ hơn prompt cỡ
   `step` hiện nay, nên khi dùng lại ngữ cảnh này sẽ phải cắt.
 - Kết quả kiểm định Ngày 5 đo trên `step.md` trước khi thêm mục bản diễn giải; prompt nay dài thêm một mục ngắn.
-- `tests/grade_bai1.py` đối chiếu theo từ khóa: LỆCH, CẦN NGƯỜI XEM và đánh giá bẫy cần người xem lại (hai mục bẫy
+- `tests/grade.py` đối chiếu theo từ khóa: LỆCH, CẦN NGƯỜI XEM và đánh giá bẫy cần người xem lại (hai mục bẫy
   script chấm ĐÃ NÊU thực ra là trùng từ).
 - Ước lượng token đang dùng số ký tự / 3,4 (`PROMPT_CHARS_PER_TOKEN`) + 700 cho chỉ dẫn schema.
 - Che giá trị chỉ thay chuỗi khớp nguyên văn (giá trị >= 4 ký tự); reason của check custom lấy nguyên từ meta.

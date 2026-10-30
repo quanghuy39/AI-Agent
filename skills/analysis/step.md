@@ -35,5 +35,9 @@ $contract
 
 Answer every part of the question: each part must appear in result_summary or in an output file listed in
 output_files. If a part cannot be answered, say so in explanation.
+When you conclude that groups differ, report the absolute and relative difference, each group's sample size and how
+certain the difference is; for small groups or small differences, state that the evidence is not sufficient.
+For each numeric column you aggregate, check its distribution (percentiles, extremes) and report how much extreme
+values affect the result. Compute all of this in the script.
 To use earlier results, read their files from the output directory; never copy their numbers into the code.
 Language: write explanation, method, can_be_wrong_if and assumption text in Vietnamese.

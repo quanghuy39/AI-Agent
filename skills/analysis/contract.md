@@ -32,7 +32,8 @@ Write one JSON object to os.environ["AGENT_META_PATH"] with:
 - Convert numpy and pandas values with int(), float(), bool() or str() before json.dump.
 
 Required checks
-- Each item of can_be_wrong_if has at least one matching custom check.
+- Each item of can_be_wrong_if has at least one custom check that directly measures that risk, not a generic
+  row-count check.
 - Write at least as many custom checks as items in can_be_wrong_if; each custom check name must restate the item it tests.
 - Each filter or join has a row_count check; give expected_ratio when the step should drop many rows.
 - Each join of two tables has a join check.
