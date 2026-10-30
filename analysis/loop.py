@@ -217,7 +217,7 @@ def _text_key(kind, text):
 
 def _add_pending(ctx, kind, text, required=True, source_key=None):
     """Ghi decision pending; da co (cung source_key, hoac cung kind va noi dung) thi tra ve decision do."""
-    for d in ctx.ledger.decisions():
+    for d in ctx.ledger.active_decisions():
         if (source_key and d.source_key == source_key) or (d.kind == kind and d.text == text):
             return d
     return ctx.ledger.add_decision(kind, text, required=required, source_key=source_key)
@@ -288,7 +288,7 @@ def _info_flags(ctx):
 
 def _has_anomaly_decision(ctx):
     return any(d.kind == "anomaly_handling" and not (d.source_key or "").startswith(ACCEPT_FLAGS_KEY)
-               for d in ctx.ledger.decisions())
+               for d in ctx.ledger.active_decisions())
 
 
 def _print_info_flags(ctx):

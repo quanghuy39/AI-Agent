@@ -59,6 +59,13 @@ def test_temp_answer_removed_and_cache_clean(env, capsys):
     assert "cache/: không có đường dẫn chứa 'answers'" in capsys.readouterr().out
 
 
+def test_superseded_decision_does_not_count_as_mentioned(env, capsys):
+    old = [{"id": "D1", "text": "Kỳ dữ liệu được dùng", "status": "superseded"}]
+    (grader.OUTPUT_ROOT / "bai9" / "decisions.json").write_text(json.dumps(old), encoding="utf-8")
+    assert grader.grade("bai9") == 0
+    assert "ĐÃ NÊU 0" in capsys.readouterr().out
+
+
 def test_answers_in_cache_fails(env, capsys):
     bad = r2.CACHE_DIR / "answers" / "bai9"
     bad.mkdir(parents=True)

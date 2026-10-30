@@ -174,22 +174,24 @@ def test_chain_exhausted_while_planning_stays_in_plan(env):
 # 4. --restart
 def test_restart_supersedes_and_returns_to_understand(env):
     run(FULL)
-    decisions, n_log = env.decisions(), len(env.read_log())
+    texts, n_log = [d.text for d in env.decisions()], len(env.read_log())
     code, _ = run([LLMChainExhausted("hết")], restart=True)
     assert code == loop.EXHAUSTED
     state = env.get_state()
     assert (state.phase, state.plan) == (Phase.UNDERSTAND, None)
     assert [r.status.value for r in env.results()] == ["superseded", "superseded"]
     assert env.results_by_question() == {}
-    assert env.decisions() == decisions and len(env.read_log()) > n_log
+    assert [d.text for d in env.decisions()] == texts and env.active_decisions() == []
+    assert len(env.read_log()) > n_log
 
 
-def test_restart_full_rerun_has_no_duplicate_decision(env):
+def test_restart_full_rerun_has_one_active_decision(env):
     run(FULL)
     code, fake = run(FULL, restart=True)
     assert code == loop.DONE and len(fake.calls) == 4
     assert env.results_by_question() == {"Q1": "R3", "Q2": "R4"}
-    assert len(env.decisions()) == 1
+    assert [d.status.value for d in env.decisions()] == ["superseded", "confirmed"]
+    assert len(env.active_decisions()) == 1
 
 
 # 5. ho so cu

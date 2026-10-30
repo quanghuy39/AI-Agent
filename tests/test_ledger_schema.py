@@ -35,7 +35,7 @@ def result(**kw):
 def test_enum_values():
     assert [s.value for s in ResultStatus] == ["valid", "stale", "superseded"]
     assert [s.value for s in CheckStatus] == ["pass", "flag", "unchecked"]
-    assert [s.value for s in DecisionStatus] == ["pending", "confirmed"]
+    assert [s.value for s in DecisionStatus] == ["pending", "confirmed", "superseded"]
     assert [s.value for s in FindingKind] == ["evidence", "hypothesis"]
     assert [s.value for s in OpenItemStatus] == ["open", "closed"]
     assert ResultStatus.VALID == "valid"  # str Enum
@@ -165,6 +165,13 @@ def test_confirm_returns_new_confirmed_and_keeps_original():
     assert len(c.confirmed_at) == len(d.created_at)  # cung dinh dang voi created_at (giay + mui gio)
     assert (c.id, c.kind, c.text, c.created_at) == (d.id, d.kind, d.text, d.created_at)
     assert d.status is DecisionStatus.PENDING and d.confirmed_at is None  # ban goc khong doi
+
+
+def test_superseded_decision_cannot_be_confirmed_and_keeps_confirmed_at():
+    d = Decision(id="D1", kind="assumption", text="x", status="superseded", confirmed_at="2026-10-28T10:00:00+07:00")
+    assert Decision(id="D2", kind="assumption", text="x", status="superseded").confirmed_at is None
+    with pytest.raises(ValueError):
+        d.confirm()
 
 
 def test_confirm_uses_given_time():

@@ -125,6 +125,10 @@ class Ledger:
     def decisions(self):
         return sorted(self._read_models(DECISIONS, Decision), key=lambda d: _id_number(d.id))
 
+    def active_decisions(self):
+        """Decision cua lan lam hien tai, bo superseded. Moi cho dung decision (khong phai doi chieu) doc o day."""
+        return [d for d in self.decisions() if d.status != DecisionStatus.SUPERSEDED]
+
     def findings(self):
         return sorted(self._read_models(FINDINGS, Finding), key=lambda f: _id_number(f.id))
 
@@ -272,6 +276,18 @@ class Ledger:
                 return decisions[i]
         raise KeyError(f"không có quyết định {decision_id}")
 
+    def supersede_decisions(self):
+        """Moi decision chua superseded (ke ca pending) thanh superseded, khong xoa. Tra ve cac id da doi."""
+        decisions = self.decisions()
+        changed = []
+        for d in decisions:
+            if d.status != DecisionStatus.SUPERSEDED:
+                d.status = DecisionStatus.SUPERSEDED
+                changed.append(d.id)
+        self._write_models(DECISIONS, decisions)
+        self.log_event("ledger", "supersede_decisions", extra={"superseded": changed})
+        return changed
+
     def pending_required(self):
         return [d for d in self.decisions() if d.required and d.status == DecisionStatus.PENDING]
 
@@ -383,7 +399,7 @@ class Ledger:
             lines.append("")
 
         lines += ["## Quyết định", ""]
-        decisions = self.decisions()
+        decisions = self.active_decisions()
         if not decisions:
             lines.append("_Chưa có._")
         for d in decisions:

@@ -11,7 +11,7 @@ Cập nhật: 30/10/2026. Nguồn: git log, code trong repo, tóm tắt cuối n
 | 3 | Xong | `ledger/` (hồ sơ bài ở `output/<bài>/`), usage log nối vào `run_log.jsonl`, Dockerfile build và chạy được. 238 test pass. |
 | 4 | Xong | `profiling/` (quality, dictionary, flags, relationships, data_summary), `validators/`, khoảng hợp lệ trong dictionary; `tests.grade_bai0b` đạt 5/5 lỗi cài sẵn. 476 test pass. |
 | 5 | Xong | Runner, skill phân tích, meta_grader, `analysis.loop`, fit_prompt, bộ kiểm định theo skill thật; chốt chuỗi analysis. Bài 0a ĐẠT toàn bộ; bài 1 chạy trọn 4 câu, số liệu đúng, phán đoán BI chưa đạt. 645 test pass. |
-| 6 | Đang làm | Mục 1 đến 5 đã commit; mục 6 đã chuẩn bị xong, chưa chạy bài 2 (chưa commit): điều phối theo pha, chạy tiếp được, `--fake` tách hồ sơ, điểm dừng xác nhận, decision chờ xác nhận, cờ chất lượng thành decision, `context_builder`, đồng bộ hồ sơ lên R2, 5 quy tắc chung trong prompt, `tests.grade <bài>`. 852 test pass. Còn lại: chạy và chấm bài 2. Phạm vi đầy đủ: chưa xác nhận. |
+| 6 | Đang làm | Mục 1 đến 5 đã commit; mục 6 đã chuẩn bị xong, chưa chạy bài 2 (chưa commit): điều phối theo pha, chạy tiếp được, `--fake` tách hồ sơ, điểm dừng xác nhận, decision chờ xác nhận, cờ chất lượng thành decision, `context_builder`, đồng bộ hồ sơ lên R2, 5 quy tắc chung trong prompt, `tests.grade <bài>`, sửa `--restart` cho decision. 858 test pass. Còn lại: chạy và chấm bài 2. Phạm vi đầy đủ: chưa xác nhận. |
 | 7 | Chưa | Chưa xác nhận (thư mục `report/`, `slides/` mới có `__init__.py`). |
 | 8 | Chưa | Chưa xác nhận (ghi chú: `LLM_CONFIG_PATH` kiểu Windows không dùng được trong container). |
 
@@ -190,6 +190,17 @@ Mục 6, chuẩn bị chạy bài 2 (chưa commit, chưa chạy bài 2):
 - Chạy bài 2 lần đầu phải có `--sensitive CUSTOMER.customer_id`: `ANALYSIS_DEFAULT_SENSITIVE` không có bài 2, dictionary
   không có thẻ `(SENSITIVE)`, không truyền thì bản tóm tắt lộ mã khách.
 
+Sửa `--restart` (chưa commit, kiểm bằng FakeLLM và R2 giả; hồ sơ `bai2` thật chưa chạy lại). Lỗi: `--restart` chỉ đổi kết
+quả, decision cũ vẫn confirmed nên được dùng lại theo `source_key` (D1, D3 `bai2` không được hỏi lại) và vẫn gửi cho AI.
+- `DecisionStatus` thêm `superseded`; hồ sơ cũ vẫn đọc được. `Ledger.active_decisions()` bỏ superseded; `decisions()` vẫn
+  trả đủ để đối chiếu.
+- `--restart` chuyển mọi decision chưa superseded, kể cả pending, sang superseded (`supersede_decisions`), giữ `text` và
+  `confirmed_at`; đóng open_item `PLAN_OPEN_ITEM`, `PENDING_OPEN_ITEM`, open_item khác giữ nguyên.
+- Dò `source_key`, `_has_anomaly_decision`, `render_markdown` đọc `active_decisions()`; `pending_required()`, `get_summary`,
+  danh sách gửi AI và câu hỏi lọc theo pending/confirmed nên tự bỏ superseded. Decision superseded không xác nhận lại được.
+- `tests/grade.py` bỏ decision superseded khi đối chiếu bẫy, để decision của lần làm trước không tính là ĐÃ NÊU.
+- Thay hành vi cũ: `--restart` trước đây giữ nguyên decisions và không hỏi lại. 5 test cũ khóa hành vi đó đã sửa theo.
+
 ## Bài học chung cho Ngày 6
 Không viết riêng cho bài 1; đã thành 5 quy tắc trong prompt (mục 6), đo trên bài 2.
 - So sánh giữa các nhóm phải nêu độ lớn khác biệt và mức chắc chắn.
@@ -231,12 +242,12 @@ Không viết riêng cho bài 1; đã thành 5 quy tắc trong prompt (mục 6),
 - Cờ mới xuất hiện sau khi kế hoạch đã được chấp nhận (profiling lại khi đang ở pha loop) chưa được đăng ký thành decision;
   chỉ đăng ký ở pha plan.
 - Báo cáo cũ gắn `source_key` theo ngưỡng mặc định vì báo cáo không lưu ngưỡng đã dùng (`--set` lúc profiling).
-- Sau `--restart`, decisions cũ (giữ theo quyết định) vẫn được gửi cho AI trong `confirmed_decisions`.
 - Hồ sơ `bai1` tạo trước Ngày 6 không có `state.json` và `question_key`: lần chạy đầu giải lại mọi câu, kết quả cũ vẫn
   valid (có in cảnh báo); nên dùng `--restart`.
 - LƯU Ý hồ sơ thật `bai0a`: `state.json` đang chứa kế hoạch demo ở phase `loop` (`problem.json` cũng là bản demo, tạo từ
   `--fake` trước khi có `output/_fake/`), kèm open_item O2 "hết hạn mức" sinh ra từ báo sai. Lần chạy thật đầu tiên phải
   dùng `python main.py bai0a --restart`.
+- `--restart` không đổi `findings.json`: phát hiện của kết quả cũ còn nguyên, và `tests/grade.py` vẫn đối chiếu với chúng.
 - Bài đã `done` thì chạy lại chỉ báo xong, không đối chiếu `--sensitive`.
 - Hạn mức: Gemini 3.8 Flash 20 lượt/ngày, OpenRouter 50 lượt/ngày (`config/llm.yaml`).
 - Chưa `docker build` lại sau khi thêm `COPY analysis/` và `context_builder.py`.

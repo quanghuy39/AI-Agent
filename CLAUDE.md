@@ -61,7 +61,8 @@ python tests/llm_eval/run_eval.py --model <key> --role analysis [--limit N] [--r
 lộ giá trị che).
 Chạy lại: tiếp từ pha trong `state.json`; câu đã giải lấy từ `Ledger.results_by_question()` (chỉ kết quả valid).
 `--sensitive` chốt vào state ở lần chạy đầu, muốn đổi thì `--restart --sensitive ...`. `--restart` chuyển kết quả valid
-thành superseded và toàn bộ file `work/` sang `work/_superseded/<thời điểm>/`; decisions và run_log giữ nguyên.
+và mọi decision thành superseded (giữ trong file, không dùng lại, hỏi lại từ đầu), toàn bộ file `work/` sang
+`work/_superseded/<thời điểm>/`, đóng open_item của bước xác nhận; run_log giữ nguyên.
 Đồng bộ R2 (trừ `--fake`, `--no-sync`): trước mỗi câu hỏi xác nhận, khi xong và khi thoát vì lỗi; lỗi đồng bộ chỉ cảnh
 báo một dòng, ghi sự kiện `sync` trong run_log, lần sau tải lại nhờ manifest. `run_task` gọi trực tiếp thì mặc định tắt.
 Lọc output tiếng Việt bằng `Select-String` cần `[Console]::OutputEncoding = [Text.Encoding]::UTF8`.

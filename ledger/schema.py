@@ -47,6 +47,7 @@ class CheckStatus(StrEnum):
 class DecisionStatus(StrEnum):
     PENDING = "pending"
     CONFIRMED = "confirmed"
+    SUPERSEDED = "superseded"  # cua lan lam truoc (--restart): giu lai de doi chieu, khong dung nua
 
 
 class DecisionKind(StrEnum):
@@ -138,9 +139,11 @@ class Decision(_Model):
 
     def confirm(self, at: str | None = None) -> "Decision":
         """Tra ve ban moi da xac nhan (status=confirmed, confirmed_at=at hoac thoi diem hien tai).
-        Khong sua doi tuong goc. Da confirmed roi thi ValueError."""
+        Khong sua doi tuong goc. Da confirmed hoac superseded thi ValueError."""
         if self.status == DecisionStatus.CONFIRMED:
             raise ValueError(f"decision {self.id} đã confirmed lúc {self.confirmed_at}")
+        if self.status == DecisionStatus.SUPERSEDED:
+            raise ValueError(f"decision {self.id} đã superseded")
         data = self.model_dump()
         data.update(status=DecisionStatus.CONFIRMED, confirmed_at=at if at is not None else now_iso())
         return Decision.model_validate(data)

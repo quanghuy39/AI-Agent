@@ -245,7 +245,8 @@ def grade_list_items(items, results, out):
     for name in ("decisions", "findings", "open_items"):
         path = out / f"{name}.json"
         for d in json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []:
-            docs.append((f"{name}:{d.get('id', '?')}", d.get("text", "")))
+            if d.get("status") != "superseded":  # decision cua lan lam truoc khong tinh la da neu
+                docs.append((f"{name}:{d.get('id', '?')}", d.get("text", "")))
     for r in results:  # ten check (y can_be_wrong_if) cung la cho agent da neu rui ro
         for c in r.get("checks") or []:
             docs.append((f"results:{r['id']} check", c.get("name", "")))

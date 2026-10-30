@@ -2,8 +2,9 @@
 
 Chay: python main.py <bai> [--sensitive BANG.cot ...] [--restart] [--yes] [--fake] [--no-sync]
 --sensitive: cot che, chot vao state o lan chay dau; chay tiep dung danh sach trong state, truyen khac thi dung.
---restart: ket qua valid cu thanh superseded, file work/ sang work/_superseded/<thoi diem>/, ve pha understand
-(decisions, run_log giu nguyen; khong truyen --sensitive thi giu danh sach cot che cu).
+--restart: ket qua valid va moi decision cu thanh superseded (hoi lai tu dau), file work/ sang
+work/_superseded/<thoi diem>/, dong open_item cua buoc xac nhan, ve pha understand (run_log giu nguyen; khong truyen
+--sensitive thi giu danh sach cot che cu).
 --yes tu tra loi "y" (chi dung khi test). --fake dung FakeLLM voi kich ban demo (khong goi AI that), ho so ghi vao
 output/_fake/<bai>/ nen khong dung toi ho so that, va khong dong bo len R2.
 --no-sync: khong dong bo ho so len R2. Mac dinh dong bo truoc moi cau hoi xac nhan, khi xong va khi thoat vi loi;
@@ -122,10 +123,13 @@ def exit_code_for(e, led, ctx=None):
 def _restart(led, sensitive):
     old = led.get_state()
     superseded = led.supersede_valid()
+    decisions = led.supersede_decisions()
+    led.close_open_items_with_text(loop.PLAN_OPEN_ITEM)
+    led.close_open_items_with_text(loop.PENDING_OPEN_ITEM)
     # khong truyen --sensitive: giu danh sach cu, khong am tham bo che
     led.set_state(Phase.UNDERSTAND, sensitive=None if sensitive or old is None else old.sensitive)
-    led.log_event("analysis", "restart", extra={"superseded": superseded})
-    print(f"Làm lại từ đầu: {len(superseded)} kết quả cũ chuyển superseded.")
+    led.log_event("analysis", "restart", extra={"superseded": superseded, "superseded_decisions": decisions})
+    print(f"Làm lại từ đầu: {len(superseded)} kết quả và {len(decisions)} decision cũ chuyển superseded.")
 
 
 def _warn_options(yes):
@@ -230,7 +234,7 @@ def main(argv=None):
     p.add_argument("task", metavar="bai")
     p.add_argument("--sensitive", action="append", default=[], metavar="BANG.COT",
                    help="cột che (lặp được); chốt ở lần chạy đầu, đổi thì cần --restart")
-    p.add_argument("--restart", action="store_true", help="làm lại từ đầu: kết quả cũ thành superseded")
+    p.add_argument("--restart", action="store_true", help="làm lại từ đầu: kết quả và decision cũ thành superseded")
     p.add_argument("--yes", action="store_true", help="tự trả lời y (chỉ dùng khi test)")
     p.add_argument("--fake", action="store_true", help="dùng FakeLLM kịch bản demo (không gọi AI thật)")
     p.add_argument("--no-sync", action="store_true", help="không đồng bộ hồ sơ lên R2")

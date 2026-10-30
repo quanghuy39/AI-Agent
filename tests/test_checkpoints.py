@@ -292,13 +292,64 @@ def test_flag_decisions_pending_required_and_not_duplicated_after_reprofiling(en
     assert code == loop.STOPPED and led.decisions() == first
 
 
-def test_flag_decision_survives_restart_without_duplicate(env):
+def test_flag_decision_asked_again_after_restart_without_active_duplicate(env):
     assert run([RESTATEMENT, SIMPLE_PLAN, STEP1, STEP2], task=FLAGGED)[0] == loop.DONE
     led = flagged_ledger(env)
     n = len(led.decisions())
     quality.profile_problem(FLAGGED)
-    assert run([RESTATEMENT, SIMPLE_PLAN, STEP1, STEP2], task=FLAGGED, restart=True)[0] == loop.DONE
-    assert len(led.decisions()) == n
+    ans = Answers()
+    assert run([RESTATEMENT, SIMPLE_PLAN, STEP1, STEP2], task=FLAGGED, yes=False, ask_user=ans,
+               restart=True)[0] == loop.DONE
+    assert ans.count(EACH) == n and len(led.active_decisions()) == n and len(led.decisions()) == 2 * n
+    assert sorted(d.source_key for d in led.decisions()[:n]) == sorted(d.source_key for d in led.active_decisions())
+
+
+# --restart: decision cua lan truoc khong dung lai
+NEW_M2 = "Tổng giá tính sau thuế"
+NEW_PLAN = {**PLAN, "assumptions": [{"kind": "metric_definition", "text": M1},
+                                    {"kind": "metric_definition", "text": NEW_M2},
+                                    {"kind": "anomaly_handling", "text": ANOMALY}], "proposed_ranges": []}
+
+
+def test_restart_asks_metric_and_anomaly_again(env):
+    assert run([RESTATEMENT, PLAN, STEP1, STEP2])[0] == loop.DONE
+    ans = Answers()
+    assert run([RESTATEMENT, NEW_PLAN, STEP1, STEP2], yes=False, ask_user=ans, restart=True)[0] == loop.DONE
+    assert ans.count(EACH) == 3  # M1, ANOMALY giong het lan truoc van hoi lai
+    active = env.active_decisions()
+    assert {d.text for d in active} == {M1, NEW_M2, ANOMALY} and {d.status.value for d in active} == {"confirmed"}
+
+
+def test_restart_keeps_old_decisions_as_superseded_in_file(env):
+    run([RESTATEMENT, PLAN, STEP1, STEP2])
+    old = {d.id: d for d in env.decisions()}
+    run([RESTATEMENT, NEW_PLAN, STEP1, STEP2], restart=True)
+    raw = {d["id"]: d for d in json.loads((env.root / "decisions.json").read_text(encoding="utf-8"))}
+    assert all(raw[i]["status"] == "superseded" and raw[i]["text"] == d.text and raw[i]["confirmed_at"] == d.confirmed_at
+               for i, d in old.items())
+    assert len(raw) == len(old) + 3
+
+
+def test_superseded_decision_not_in_step_prompt_or_render(env):
+    run([RESTATEMENT, PLAN, STEP1, STEP2])
+    code, fake = run([RESTATEMENT, NEW_PLAN, STEP1, STEP2], restart=True)
+    steps = [c["messages"][0]["content"] for c in fake.calls if c["json_schema"].__name__ == "AnalysisStep"]
+    assert code == loop.DONE and len(steps) == 2
+    assert all(NEW_M2 in p and M2 not in p and SCOPE not in p for p in steps)
+    text = env.render_markdown()
+    assert NEW_M2 in text and M2 not in text
+    ctx = loop.load_context(TASK)
+    assert not any(M2 in line for line in ctx.decisions) and M2 not in loop._short_decisions(ctx)
+
+
+def test_restart_supersedes_pending_and_closes_confirm_open_items(env):
+    assert run([RESTATEMENT, PLAN], yes=False, ask_user=Answers("y", "n"))[0] == loop.STOPPED
+    assert open_texts(env) == [loop.PLAN_OPEN_ITEM] and env.pending_required()
+    env.add_open_item_once(loop.PENDING_OPEN_ITEM)
+    env.add_open_item("Việc khác")
+    code, _ = run([LLMChainExhausted("hết")], restart=True)
+    assert code == loop.EXHAUSTED and env.pending_required() == []
+    assert set(open_texts(env)) == {"Việc khác", loop.CHAIN_OPEN_ITEM}
 
 
 def test_report_saved_before_source_key_gets_keys_on_load(env):
@@ -398,7 +449,8 @@ def test_info_only_asks_one_question_and_rerun_does_not_duplicate(env, capsys):
 
     ans = Answers()
     code, _ = run([RESTATEMENT, SIMPLE_PLAN, STEP1, STEP2], task=INFO_ONLY, yes=False, ask_user=ans, restart=True)
-    assert code == loop.DONE and ans.count(EACH) == 0 and len(led.decisions()) == 1
+    assert code == loop.DONE and ans.count(EACH) == 1 and len(led.decisions()) == 2
+    assert len(led.active_decisions()) == 1
 
 
 def test_info_only_s_saves_user_text_and_keeps_key(env):
