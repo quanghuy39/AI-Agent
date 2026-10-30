@@ -11,13 +11,13 @@ Moi chuoi dua lai cho AI deu qua mask_text: gia tri that cua cot che -> [đã ch
 
 import argparse
 import hashlib
-import math
 import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import config
+import context_builder
 import llm
 from analysis.meta_grader import grade_meta, read_local_table
 from ledger import DecisionStatus, Ledger, ResultStatus
@@ -65,7 +65,6 @@ class Context:
     work_dir: Path                    # output/<task>/work/
     masked_values: set = field(default_factory=set, repr=False)
     decisions: list = field(default_factory=list)   # dong "- D1 [kind] text" da xac nhan
-    input_limit: int | None = None                  # max_input_tokens nho nhat cua chuoi analysis (nap lan dau)
     sensitive: list = field(default_factory=list)   # "BANG.cot" da dung: --sensitive + mac dinh cua bai
     report: dict = field(default_factory=dict, repr=False)  # data_quality_report
     model: str | None = None                        # model cua lan goi AI gan nhat (khong tinh trung cache)
@@ -167,8 +166,21 @@ def confirm(question, yes=False, ask_user=input):
 
 def _render(ctx, prompt_name, **variables):
     """Render prompt; moi bien (tru data summary da che san) deu qua ctx.mask."""
-    return render_prompt(prompt_name, problem=ctx.mask(ctx.problem), data_summary=ctx.summary["text"],
+    summary = variables.pop(context_builder.SUMMARY, ctx.summary["text"])
+    return render_prompt(prompt_name, problem=ctx.mask(ctx.problem), data_summary=summary,
                          **{k: ctx.mask(v) for k, v in variables.items()})
+
+
+def _build_prompt(ctx, prompt, variables, shortened, question=None):
+    """Prompt da che va cat cho vua model nho nhat; moi lan ghi run_log. Qua dai -> open_item + StopLoop."""
+    text, info = context_builder.build_prompt(ROLE, prompt, lambda **v: _render(ctx, prompt, **v), variables, shortened)
+    ctx.ledger.log_event("analysis", "prompt_fit", inputs={"question": question} if question else {},
+                         status="ok" if text is not None else "too_long", extra=info)
+    if text is None:
+        where = f"{question}: " if question else ""
+        ctx.ledger.add_open_item_once(f"{where}prompt quá dài so với model nhỏ nhất (prompt {prompt}).")
+        raise StopLoop(f"{where}prompt {prompt} quá dài so với model nhỏ nhất.")
+    return text
 
 
 def _note_model(ctx, result):
@@ -187,48 +199,6 @@ def _call(ctx, text, schema):
     result = llm.ask_model([{"role": "user", "content": text}], role=ROLE, json_schema=schema, task_id=ctx.task)
     _note_model(ctx, result)
     return result.data
-
-
-def _ask(ctx, prompt_name, schema, **variables):
-    return _call(ctx, _render(ctx, prompt_name, **variables), schema)
-
-
-# ---------- do dai prompt ----------
-
-def min_input_tokens(role=ROLE):
-    """max_input_tokens nho nhat trong chuoi fallback dang dung cua role (doc llm.yaml qua llm.client)."""
-    from llm import client  # cau hinh LLM: chi doc file, khong goi mang
-    cfg = client._load_config(client._config_path())
-    chain = client._active_chains(cfg).get(role) or [i["model"] for i in cfg["roles"][role]["chain"]]
-    return min(int(cfg["models"][m]["max_input_tokens"]) for m in chain)
-
-
-def estimate_tokens(text):
-    return math.ceil(len(text) / config.PROMPT_CHARS_PER_TOKEN) + config.PROMPT_SCHEMA_TOKENS
-
-
-def fit_prompt(render, variables, shortened, limit):
-    """Render prompt step va cat dan cho vua ngan sach = limit * (1 - PROMPT_MARGIN).
-
-    render(**variables) -> chuoi. shortened: ban rut gon cua "previous_results" va "confirmed_decisions".
-    Thu tu cat: (a) previous_results rut gon, (b) error_feedback con ANALYSIS_FEEDBACK_SHORT_CHARS ky tu cuoi,
-    (c) confirmed_decisions rut gon. Tra ve (text hoac None neu van vuot, info chi gom so lieu)."""
-    budget = int(limit * (1 - config.PROMPT_MARGIN))
-    text = render(**variables)
-    info = {"limit": limit, "budget": budget, "chars_before": len(text), "tokens_before": estimate_tokens(text),
-            "cut": []}
-    steps = [("previous_results", shortened["previous_results"]),
-             ("error_feedback", variables["error_feedback"][-config.ANALYSIS_FEEDBACK_SHORT_CHARS:]),
-             ("confirmed_decisions", shortened["confirmed_decisions"])]
-    current = dict(variables)
-    for name, value in steps:
-        if estimate_tokens(text) <= budget:
-            break
-        current[name] = value
-        info["cut"].append(name)
-        text = render(**current)
-    info.update(chars_after=len(text), tokens_after=estimate_tokens(text))
-    return (text if info["tokens_after"] <= budget else None), info
 
 
 def _decision_line(d):
@@ -360,13 +330,32 @@ def print_restatement(r):
             print(f"  - {a}")
 
 
+def _corrections_text(corrections, max_chars):
+    """Chinh sua cua nguoi dung cho prompt, toi da max_chars, uu tien chinh sua moi nhat."""
+    kept, used = [], 0
+    for c in reversed(corrections):
+        line = f"- {c}"
+        if used + len(line) > max_chars:
+            break
+        kept.insert(0, line)
+        used += len(line) + 1
+    if corrections and not kept:  # chinh sua moi nhat tu no da qua dai
+        kept = [f"- {corrections[-1]}"[:max_chars - 1] + "…"]
+    omitted = len(corrections) - len(kept)
+    return "\n".join(([f"({omitted} older corrections omitted)"] if omitted else []) + kept) or "(none)"
+
+
 def understand(ctx, yes, ask_user):
     """AI dien giai lai de, nguoi dung xac nhan. Khong dong y: go chinh sua, goi lai AI (toi da
     ANALYSIS_UNDERSTAND_MAX_RETRIES lan). Dong y -> set_problem; khong chot duoc -> open_item + StopLoop."""
     corrections, previous = [], "(none)"
     for attempt in range(config.ANALYSIS_UNDERSTAND_MAX_RETRIES + 1):
-        r = _ask(ctx, "understand", ProblemRestatement, previous_restatement=previous,
-                 user_corrections="\n".join(f"- {c}" for c in corrections) or "(none)")
+        text = _build_prompt(ctx, "understand", {
+            "previous_restatement": previous,
+            "user_corrections": _corrections_text(corrections, config.CONTEXT_CORRECTIONS_MAX_CHARS),
+        }, {"previous_restatement": "(none)",
+            "user_corrections": _corrections_text(corrections, config.CONTEXT_CORRECTIONS_SHORT_CHARS)})
+        r = _call(ctx, text, ProblemRestatement)
         ctx.ledger.log_event("analysis", "understand", extra={"attempt": attempt + 1, "n_goals": len(r.goals),
                                                               "n_ambiguities": len(r.ambiguities)})
         print_restatement(r)
@@ -405,20 +394,31 @@ def _fmt_bounds(r):
     return f">= {r.min:g}" if r.min is not None else f"<= {r.max:g}"
 
 
-def _confirmed_understanding(ctx):
-    """Ban dien giai da xac nhan (problem.json) dang van ban cho prompt plan."""
+def _confirmed_understanding(ctx, short=False):
+    """Ban dien giai da xac nhan (problem.json) dang van ban cho prompt plan, step. short: chi con dien giai va
+    chinh sua cua nguoi dung."""
     record = ctx.ledger.get_problem() or {}
     r = record.get("restatement") or {}
     lines = [r.get("restatement") or "(none)"]
-    for title, items in (("Goals", r.get("goals")), ("Open points", r.get("ambiguities")),
-                         ("User corrections", record.get("user_corrections"))):
+    for title, items in (() if short else (("Goals", r.get("goals")), ("Open points", r.get("ambiguities")))):
         if items:
             lines += [f"{title}:"] + [f"- {x}" for x in items]
+    corrections = record.get("user_corrections")
+    if corrections:
+        limit = config.CONTEXT_CORRECTIONS_SHORT_CHARS if short else config.CONTEXT_CORRECTIONS_MAX_CHARS
+        lines += ["User corrections:", _corrections_text(corrections, limit)]
     return "\n".join(lines)
 
 
+def _summary_cut(ctx):
+    return context_builder.summary_shrinker(ctx.report, ctx.sensitive)
+
+
 def make_plan(ctx):
-    plan = _ask(ctx, "plan", AnalysisPlan, confirmed_understanding=_confirmed_understanding(ctx))
+    text = _build_prompt(ctx, "plan", {"confirmed_understanding": _confirmed_understanding(ctx)},
+                         {"confirmed_understanding": _confirmed_understanding(ctx, short=True),
+                          context_builder.SUMMARY: _summary_cut(ctx)})
+    plan = _call(ctx, text, AnalysisPlan)
     ctx.ledger.log_event("analysis", "plan", extra={"n_questions": len(plan.sub_questions),
                                                      "n_assumptions": len(plan.assumptions),
                                                      "cannot_answer": bool(plan.cannot_answer_reason)})
@@ -526,12 +526,18 @@ def build_feedback(run, grade=None):
     return "\n\n".join(parts)
 
 
-def _work_files(ctx):
-    """Dong liet ke file trong work/ cho AI; bo _superseded/ (runner cung khong chep thu muc nay)."""
-    files = sorted(p.relative_to(ctx.work_dir).as_posix() for p in ctx.work_dir.rglob("*")
-                   if p.is_file() and SUPERSEDED_DIR not in p.relative_to(ctx.work_dir).parts) \
+def _work_files(ctx, max_files=None):
+    """Dong liet ke file trong work/ cho AI; bo _superseded/ (runner cung khong chep thu muc nay).
+    max_files: chi giu file moi nhat."""
+    paths = [p for p in ctx.work_dir.rglob("*")
+             if p.is_file() and SUPERSEDED_DIR not in p.relative_to(ctx.work_dir).parts] \
         if ctx.work_dir.is_dir() else []
-    return "Files in output directory: " + (", ".join(files) if files else "(none)")
+    omitted = max(len(paths) - max_files, 0) if max_files else 0
+    if omitted:
+        paths = sorted(paths, key=lambda p: p.stat().st_mtime)[omitted:]
+    files = sorted(p.relative_to(ctx.work_dir).as_posix() for p in paths)
+    return "Files in output directory: " + (", ".join(files) if files else "(none)") \
+        + (f" (+{omitted} older files)" if omitted else "")
 
 
 def _previous_results(ctx, results_by_key):
@@ -541,37 +547,51 @@ def _previous_results(ctx, results_by_key):
     return "\n".join(lines)
 
 
-def _short_previous(ctx, results_by_key):
-    """Ban rut gon (chi ket qua valid): id, cau hoi, cac khoa result_summary, ten file trong work/."""
-    lines = [f"{r.id}: {r.question} | keys: {', '.join(r.result_summary) or '-'}" for r in ctx.ledger.results()
-             if r.status == ResultStatus.VALID]
-    lines.append(_work_files(ctx))
-    lines += [f"{key} -> {rid}" for key, rid in results_by_key.items()]
+def _short_previous(ctx, results_by_key, keep_ids=()):
+    """Ban rut gon (chi ket qua valid): id, cau hoi, cac khoa result_summary, ten file trong work/. Toi da
+    CONTEXT_PREVIOUS_MAX_RESULTS ket qua moi nhat, cong keep_ids (ket qua cau hien tai phu thuoc)."""
+    valid = [r for r in ctx.ledger.results() if r.status == ResultStatus.VALID]
+    newest = {r.id for r in valid[-config.CONTEXT_PREVIOUS_MAX_RESULTS:]}
+    kept = [r for r in valid if r.id in newest or r.id in keep_ids]
+    lines = [f"({len(valid) - len(kept)} older results omitted)"] if len(kept) < len(valid) else []
+    lines += [f"{r.id}: {r.question} | keys: {', '.join(r.result_summary) or '-'}" for r in kept]
+    lines.append(_work_files(ctx, config.CONTEXT_PREVIOUS_MAX_FILES))
+    kept_ids = {r.id for r in kept}
+    lines += [f"{key} -> {rid}" for key, rid in results_by_key.items() if rid in kept_ids]
     return "\n".join(lines)
 
 
+def _decision_rank(d):
+    """Thu tu giu lai khi phai cat: dinh nghia chi so, xu ly bat thuong, gia dinh; "chap nhan R.." bo truoc."""
+    if (d.source_key or "").startswith(ACCEPT_FLAGS_KEY):
+        return 3
+    return {"metric_definition": 0, "anomaly_handling": 1}.get(d.kind, 2)
+
+
 def _short_decisions(ctx):
+    """Ban rut gon: toi da CONTEXT_DECISIONS_MAX decision, moi cai ANALYSIS_DECISION_SHORT_CHARS ky tu."""
     n = config.ANALYSIS_DECISION_SHORT_CHARS
-    texts = [re.sub(r"^- D\d+ \[[^\]]*\] ", "- ", d) for d in ctx.decisions]
-    return "\n".join(t if len(t) <= n else t[:n - 1] + "…" for t in texts) or "(none)"
+    confirmed = [d for d in ctx.ledger.decisions() if d.status == DecisionStatus.CONFIRMED]
+    kept = sorted(confirmed, key=_decision_rank)[:config.CONTEXT_DECISIONS_MAX]
+    texts = [f"- {d.text}" for d in kept]
+    lines = [t if len(t) <= n else t[:n - 1] + "…" for t in texts]
+    if len(kept) < len(confirmed):
+        lines.append(f"({len(confirmed) - len(kept)} less important decisions omitted)")
+    return "\n".join(lines) or "(none)"
 
 
 def _step_prompt(ctx, q, results_by_key, feedback):
-    """Prompt step da che va cat cho vua model nho nhat; qua dai -> open_item + StopLoop (khong goi AI)."""
     variables = {"confirmed_decisions": "\n".join(ctx.decisions) or "(none)",
+                 "confirmed_understanding": _confirmed_understanding(ctx),
                  "previous_results": _previous_results(ctx, results_by_key),
                  "question": f"{q.key}: {q.question}", "error_feedback": feedback}
-    shortened = {"previous_results": _short_previous(ctx, results_by_key), "confirmed_decisions": _short_decisions(ctx)}
-    if ctx.input_limit is None:
-        ctx.input_limit = min_input_tokens()
-    text, info = fit_prompt(lambda **v: _render(ctx, "step", **v), variables, shortened, ctx.input_limit)
-    ctx.ledger.log_event("analysis", "prompt_fit", inputs={"question": q.key},
-                         status="ok" if text is not None else "too_long", extra=info)
-    if text is None:
-        ctx.ledger.add_open_item(f"{q.key}: prompt quá dài so với model nhỏ nhất "
-                                 f"(~{info['tokens_after']} token > {info['budget']}).")
-        raise StopLoop(f"{q.key}: prompt quá dài so với model nhỏ nhất.")
-    return text
+    keep = {results_by_key[d] for d in q.depends_on if d in results_by_key}
+    shortened = {"previous_results": _short_previous(ctx, results_by_key, keep),
+                 "error_feedback": feedback[-config.ANALYSIS_FEEDBACK_SHORT_CHARS:],
+                 "confirmed_decisions": _short_decisions(ctx),
+                 "confirmed_understanding": _confirmed_understanding(ctx, short=True),
+                 context_builder.SUMMARY: _summary_cut(ctx)}
+    return _build_prompt(ctx, "step", variables, shortened, question=q.key)
 
 
 def _next_result_id(ledger):

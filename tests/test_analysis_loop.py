@@ -9,6 +9,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
+import context_builder as cb
 import llm
 from analysis import loop
 from ledger import Ledger
@@ -266,7 +267,7 @@ def test_plan_without_coverage_stops_loop(env):
 
 FIT_VARS = {"previous_results": "P" * 3400, "error_feedback": "E" * 1700, "confirmed_decisions": "D" * 1700,
             "question": "Q1: ?"}
-FIT_SHORT = {"previous_results": "p" * 10, "confirmed_decisions": "d" * 10}
+FIT_SHORT = {"previous_results": "p" * 10, "error_feedback": "E" * 600, "confirmed_decisions": "d" * 10}
 
 
 def _join(**v):
@@ -276,11 +277,11 @@ def _join(**v):
 def _limit_for(**v):
     """limit nho nhat ma prompt nay vua (ngan sach = limit * (1 - bien))."""
     import math
-    return math.ceil(loop.estimate_tokens(_join(**v)) / (1 - loop.config.PROMPT_MARGIN)) + 1
+    return math.ceil(cb.estimate_tokens(_join(**v)) / (1 - cb.config.PROMPT_MARGIN)) + 1
 
 
 def test_fit_prompt_unchanged_when_fits():
-    text, info = loop.fit_prompt(_join, FIT_VARS, FIT_SHORT, limit=10 ** 6)
+    text, info = cb.fit_prompt("step", _join, FIT_VARS, FIT_SHORT, limit=10 ** 6)
     assert text == _join(**FIT_VARS) and info["cut"] == []
     assert info["chars_before"] == info["chars_after"] == len(text)
 
@@ -288,9 +289,9 @@ def test_fit_prompt_unchanged_when_fits():
 @pytest.mark.parametrize("n_cuts", [1, 2, 3])
 def test_fit_prompt_cuts_in_order(n_cuts):
     stages = [FIT_VARS, {**FIT_VARS, "previous_results": "p" * 10}]
-    stages.append({**stages[1], "error_feedback": "E" * loop.config.ANALYSIS_FEEDBACK_SHORT_CHARS})
+    stages.append({**stages[1], "error_feedback": "E" * 600})
     stages.append({**stages[2], "confirmed_decisions": "d" * 10})
-    text, info = loop.fit_prompt(_join, FIT_VARS, FIT_SHORT, limit=_limit_for(**stages[n_cuts]))
+    text, info = cb.fit_prompt("step", _join, FIT_VARS, FIT_SHORT, limit=_limit_for(**stages[n_cuts]))
     assert info["cut"] == ["previous_results", "error_feedback", "confirmed_decisions"][:n_cuts]
     assert text == _join(**stages[n_cuts]) and info["tokens_after"] < info["tokens_before"]
 
@@ -298,41 +299,45 @@ def test_fit_prompt_cuts_in_order(n_cuts):
 def test_fit_prompt_still_too_long():
     smallest = {"previous_results": "p" * 10, "error_feedback": "E" * 600, "confirmed_decisions": "d" * 10,
                 "question": "Q1: ?"}
-    text, info = loop.fit_prompt(_join, FIT_VARS, FIT_SHORT, limit=_limit_for(**smallest) - 2)
+    text, info = cb.fit_prompt("step", _join, FIT_VARS, FIT_SHORT, limit=_limit_for(**smallest) - 2)
     assert text is None and len(info["cut"]) == 3
 
 
 def test_loop_cuts_prompt_and_still_calls_ai(env, monkeypatch):
-    real, seen = loop.fit_prompt, []
+    real, seen = cb.fit_prompt, []
 
-    def tight(render, variables, shortened, limit):
+    def tight(prompt, render, variables, shortened, limit):
+        if prompt != "step":
+            return real(prompt, render, variables, shortened, limit)
         # limit vua thieu 1 token cho prompt day du -> buoc phai cat
         full = render(**variables)
-        text, info = real(render, variables, shortened,
-                          int((loop.estimate_tokens(full) - 1) / (1 - loop.config.PROMPT_MARGIN)))
+        text, info = real(prompt, render, variables, shortened,
+                          int((cb.estimate_tokens(full) - 1) / (1 - cb.config.PROMPT_MARGIN)))
         seen.append(info)
         return text, info
 
-    monkeypatch.setattr(loop, "fit_prompt", tight)
+    monkeypatch.setattr(cb, "fit_prompt", tight)
     code, fake = run([PLAN, STEP1, STEP2])
     assert code == loop.DONE and len(fake.calls) == 4 and len(seen) == 2  # da cat va van goi AI
-    order = ["previous_results", "error_feedback", "confirmed_decisions"]
     for info in seen:
-        assert info["cut"] and info["cut"] == order[:len(info["cut"])]  # cat dung thu tu, dung o buoc du
+        assert info["cut"] == ["previous_results"]  # dung o bac du
         assert info["tokens_after"] < info["tokens_before"]
     assert "keys: n_customers" in prompts(fake)[3]  # Q2 nhan previous_results ban rut gon
 
 
 def test_loop_stops_when_prompt_too_long(env, monkeypatch):
-    monkeypatch.setattr(loop, "min_input_tokens", lambda role="analysis": 100)
+    limits = iter([9000, 9000])  # understand, plan vua; step khong
+
+    monkeypatch.setattr(cb, "min_input_tokens", lambda role: next(limits, 100))
     code, fake = run([PLAN, STEP1])
     assert code == loop.STOPPED
     assert [c["json_schema"].__name__ for c in fake.calls] == ["ProblemRestatement", "AnalysisPlan"]  # 0 lan goi AI cho buoc giai
     led = ledger(env)
     assert any("prompt quá dài so với model nhỏ nhất" in o.text for o in led.open_items())
-    ev = next(e for e in led.read_log() if e.action == "prompt_fit")
+    ev = [e for e in led.read_log() if e.action == "prompt_fit"][-1]
     assert ev.status == "too_long"
-    assert set(ev.extra) == {"limit", "budget", "chars_before", "tokens_before", "chars_after", "tokens_after", "cut"}
+    assert set(ev.extra) == {"role", "prompt", "limit", "budget", "chars_before", "tokens_before", "chars_after",
+                             "tokens_after", "cut"}
 
 
 def test_cli_use_fake(env, capsys):

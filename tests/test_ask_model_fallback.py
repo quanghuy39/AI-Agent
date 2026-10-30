@@ -33,11 +33,11 @@ settings:
   allowed_fails: 2
 
 models:
-  a1: {provider: gemini, litellm_model: gemini/a1, api_key_env: GEMINI_API_KEY, max_tokens: 100}
-  m1: {provider: mistral, litellm_model: mistral/m1, api_key_env: MISTRAL_API_KEY, max_tokens: 100}
-  o1: {provider: openrouter, litellm_model: openrouter/o1, api_key_env: OPENROUTER_API_KEY, max_tokens: 100}
-  o2: {provider: openrouter, litellm_model: openrouter/o2, api_key_env: OPENROUTER_API_KEY, max_tokens: 100}
-  g1: {provider: groq, litellm_model: groq/g1, api_key_env: GROQ_API_KEY, max_tokens: 100}
+  a1: {provider: gemini, litellm_model: gemini/a1, api_key_env: GEMINI_API_KEY, max_tokens: 100, max_input_tokens: 1000}
+  m1: {provider: mistral, litellm_model: mistral/m1, api_key_env: MISTRAL_API_KEY, max_tokens: 100, max_input_tokens: 1000}
+  o1: {provider: openrouter, litellm_model: openrouter/o1, api_key_env: OPENROUTER_API_KEY, max_tokens: 100, max_input_tokens: 1000}
+  o2: {provider: openrouter, litellm_model: openrouter/o2, api_key_env: OPENROUTER_API_KEY, max_tokens: 100, max_input_tokens: 1000}
+  g1: {provider: groq, litellm_model: groq/g1, api_key_env: GROQ_API_KEY, max_tokens: 100, max_input_tokens: 1000}
 
 roles:
   r1:

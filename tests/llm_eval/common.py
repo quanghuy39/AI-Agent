@@ -42,7 +42,8 @@ def analysis_prompt(case):
     quyet dinh, ket qua hay file nao truoc do."""
     from skills.analysis import render_prompt
     return render_prompt("step", problem=case.user, data_summary=synth_data.data_summary_text(),
-                         confirmed_decisions="(none)", previous_results="Files in output directory: (none)",
+                         confirmed_decisions="(none)", confirmed_understanding="(none)",
+                         previous_results="Files in output directory: (none)",
                          question=f"Q1: {case.user}", error_feedback="")
 
 

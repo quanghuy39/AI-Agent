@@ -11,7 +11,7 @@ Cập nhật: 30/10/2026. Nguồn: git log, code trong repo, tóm tắt cuối n
 | 3 | Xong | `ledger/` (hồ sơ bài ở `output/<bài>/`), usage log nối vào `run_log.jsonl`, Dockerfile build và chạy được. 238 test pass. |
 | 4 | Xong | `profiling/` (quality, dictionary, flags, relationships, data_summary), `validators/`, khoảng hợp lệ trong dictionary; `tests.grade_bai0b` đạt 5/5 lỗi cài sẵn. 476 test pass. |
 | 5 | Xong | Runner, skill phân tích, meta_grader, `analysis.loop`, fit_prompt, bộ kiểm định theo skill thật; chốt chuỗi analysis. Bài 0a ĐẠT toàn bộ; bài 1 chạy trọn 4 câu, số liệu đúng, phán đoán BI chưa đạt. 645 test pass. |
-| 6 | Đang làm | Mục 1, 2, 3 xong (chưa commit): điều phối theo pha, chạy tiếp được, `--fake` tách hồ sơ, điểm dừng xác nhận, decision chờ xác nhận, cờ chất lượng thành decision. 753 test pass. Còn lại theo ghi chú: mục 4 (context_builder), mục 5 (đồng bộ hồ sơ lên R2); thêm các bài học ở mục "Bài học chung cho Ngày 6". Phạm vi đầy đủ: chưa xác nhận. |
+| 6 | Đang làm | Mục 1, 2, 3, 4 xong (chưa commit): điều phối theo pha, chạy tiếp được, `--fake` tách hồ sơ, điểm dừng xác nhận, decision chờ xác nhận, cờ chất lượng thành decision, `context_builder`. 783 test pass. Còn lại theo ghi chú: mục 5 (đồng bộ hồ sơ lên R2); thêm các bài học ở mục "Bài học chung cho Ngày 6". Phạm vi đầy đủ: chưa xác nhận. |
 | 7 | Chưa | Chưa xác nhận (thư mục `report/`, `slides/` mới có `__init__.py`). |
 | 8 | Chưa | Chưa xác nhận (ghi chú: `LLM_CONFIG_PATH` kiểu Windows không dùng được trong container). |
 
@@ -132,6 +132,35 @@ chưa chạy với AI thật):
 - Số cờ theo hồ sơ hiện có (flag/info): bai0a 0/0, bai0b 7/2, bai1 0/3, bai2 0/6. Bài 1, 2 đi qua câu hỏi giữ nguyên dữ
   liệu; bai0a in "Không có bất thường"; đường cờ flag thành decision chưa có bài thật nào ngoài bai0b để hỏi.
 
+Mục 4, `context_builder` (chưa commit, kiểm bằng FakeLLM và R2 giả; chưa chạy với AI thật):
+- `context_builder.py` ở gốc dự án: chuyển `fit_prompt`, `estimate_tokens`, `min_input_tokens` từ `analysis/loop.py` sang,
+  tổng quát theo role. Ngân sách = `max_input_tokens` nhỏ nhất của chuỗi role, trừ biên 10%: analysis 8.100, report và
+  slide 4.500 token. Giữ ước lượng ký tự / 3,4 + 700 (token thật bài 1 cao hơn ước lượng khoảng 1%).
+- Cả 3 prompt đi qua `build_prompt`; `PROMPT_CUTS` khai báo thứ tự cắt:
+  - understand: previous_restatement → user_corrections.
+  - plan: confirmed_understanding → data_summary.
+  - step: previous_results → error_feedback → confirmed_decisions → confirmed_understanding → data_summary.
+  Đề gốc, câu hỏi hiện tại, contract không cắt. Bậc data_summary gọi lại `build_data_summary` với 6.000, 4.500, 3.000,
+  2.000 ký tự (`CONTEXT_SUMMARY_MAX_CHARS`), vẫn đi qua mức cắt và lưới an toàn che giá trị.
+- Trần: `user_corrections` 1.500 ký tự (400 khi cắt), giữ chỉnh sửa mới nhất; `_short_previous` 8 kết quả mới nhất cộng
+  kết quả câu hiện tại phụ thuộc, 20 file mới nhất; `_short_decisions` 15 decision, ưu tiên `metric_definition` rồi
+  `anomaly_handling`, decision "chấp nhận R.. dù có cờ" bị bỏ trước. `problem.json` vẫn giữ đủ.
+- Vẫn vượt sau mọi bậc: open_item chống trùng (text không còn số token), dừng mã 3, không gọi AI. Trước đó chỉ `step` có
+  bảo vệ này.
+- `step.md` nhận `confirmed_understanding` gồm `user_corrections`; trước đó chỉnh sửa của người dùng chỉ đến pha plan.
+  Bộ kiểm định truyền "(none)" cho biến này.
+- `max_input_tokens` vào `REQUIRED_MODEL_FIELDS`: thiếu thì báo lỗi khi nạp `llm.yaml`.
+- `run_log`: sự kiện `prompt_fit` ở mọi prompt, `extra` gồm role, prompt, limit, budget, số ký tự và token trước/sau, cut
+  (mức cắt đã dùng, vd. `data_summary:4500`).
+- Kích thước ước lượng hiện tại (token, chưa cắt gì; bản diễn giải giả định bằng nửa độ dài đề vì chưa có hồ sơ thật):
+
+  | Prompt | bai1 | bai2 |
+  |---|---|---|
+  | understand | ~1.155 | ~1.154 |
+  | plan | ~4.238 | ~4.670 |
+  | step, chưa có kết quả | ~4.128 | ~4.560 |
+  | step, đủ hồ sơ hiện có | ~4.753 | ~4.568 (bai2 chưa có kết quả) |
+
 ## Bài học chung cho Ngày 6
 Không viết riêng cho bài 1; đo trên bài 2.
 - So sánh giữa các nhóm phải nêu độ lớn khác biệt và mức chắc chắn.
@@ -150,8 +179,8 @@ Không viết riêng cho bài 1; đo trên bài 2.
 - Ngày 5 chỉ có xác nhận y/n đơn giản; điểm dừng đầy đủ để Ngày 6.
 - Bài 1 chỉ che `CUSTOMER.customer_id` (`config.ANALYSIS_DEFAULT_SENSITIVE`).
 - Bỏ Groq (`groq_gpt_oss_120b`) khỏi chuỗi analysis, vẫn giữ ở report/slide: chưa qua kiểm định, tpm 8000 quá nhỏ,
-  trần 5000 token làm bài 1 dừng ở Q4. Giới hạn prompt nhỏ nhất giờ là 9000 token (`analysis.loop.min_input_tokens()`,
-  do gemma_4_31b).
+  trần 5000 token làm bài 1 dừng ở Q4. Giới hạn prompt nhỏ nhất của analysis giờ là 9000 token
+  (`context_builder.min_input_tokens("analysis")`, do gemma_4_31b).
 - Ngưỡng kiểm định analysis chốt 30/10/2026; no_forbidden, handles_missing_column, assumptions_present chỉ ghi nhận
   (mỗi tiêu chí 1 case), không dùng để loại model.
 - Lệch thiết kế 6.7 (tạm thời): giữ `enforce_validation: false`, nên model chưa qua kiểm định vẫn chạy khi đứng sau
@@ -159,7 +188,9 @@ Không viết riêng cho bài 1; đo trên bài 2.
   `LLMConfigError`. Nội dung chính xác của mục 6.7 nằm trong tài liệu thiết kế ngoài repo (chưa đối chiếu nguyên văn).
 
 ## Giới hạn và việc để sau (Ngày 6 trở đi)
-- Prompt lập kế hoạch (`plan.md`) chưa có bảo vệ độ dài.
+- Prompt report/slide chưa viết (Ngày 7). Trần 5.000 token của chuỗi report/slide (ngân sách 4.500) nhỏ hơn prompt cỡ
+  `step` hiện nay, nên khi dùng lại ngữ cảnh này sẽ phải cắt.
+- Kết quả kiểm định Ngày 5 đo trên `step.md` trước khi thêm mục bản diễn giải; prompt nay dài thêm một mục ngắn.
 - `tests/grade_bai1.py` đối chiếu theo từ khóa: LỆCH, CẦN NGƯỜI XEM và đánh giá bẫy cần người xem lại (hai mục bẫy
   script chấm ĐÃ NÊU thực ra là trùng từ).
 - Ước lượng token đang dùng số ký tự / 3,4 (`PROMPT_CHARS_PER_TOKEN`) + 700 cho chỉ dẫn schema.

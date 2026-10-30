@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 import config
-from analysis import loop
+import context_builder
 from llm import FakeLLM, LLMChainExhausted, LLMRequestError, client, structured, usage, use_fake
 from skills.analysis import load_prompt, render_prompt
 from tests.llm_eval import cases_report, cases_slide, common, run_eval, summary, synth_data
@@ -108,10 +108,10 @@ def test_synth_data_has_traps():
 
 @pytest.mark.parametrize("case", list(CASES.values()), ids=lambda c: c.id)
 def test_prompt_budget(case):
-    if case.role == "analysis":  # cung uoc luong va ngan sach voi vong lap that (analysis.loop)
+    if case.role == "analysis":  # cung uoc luong va ngan sach voi vong lap that (context_builder)
         (msg,) = common.build_messages(case)
-        budget = int(loop.min_input_tokens("analysis") * (1 - config.PROMPT_MARGIN))
-        assert loop.estimate_tokens(msg["content"]) <= budget, f"{case.id}: {len(msg['content'])} ký tự"
+        budget = context_builder.budget_tokens(context_builder.min_input_tokens("analysis"))
+        assert context_builder.estimate_tokens(msg["content"]) <= budget, f"{case.id}: {len(msg['content'])} ký tự"
         return
     msgs = common.build_messages(case) + [structured.instruction_message(SCHEMAS[case.role])]
     chars = sum(len(m["content"]) for m in msgs)
@@ -125,7 +125,8 @@ def test_analysis_prompt_is_real_skill():
     text = msg["content"]
     assert msg["role"] == "user"
     assert text == render_prompt("step", problem=case.user, data_summary=synth_data.data_summary_text(),
-                                 confirmed_decisions="(none)", previous_results="Files in output directory: (none)",
+                                 confirmed_decisions="(none)", confirmed_understanding="(none)",
+                                 previous_results="Files in output directory: (none)",
                                  question=f"Q1: {case.user}", error_feedback="")
     assert load_prompt("contract").strip() in text and "AGENT_META_PATH" in text
     assert "## orders (rows 400" in text and "order_date: date %d-%m-%Y" in text  # data summary cua du lieu gia

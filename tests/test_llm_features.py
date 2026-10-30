@@ -49,10 +49,10 @@ settings:
   usage_log_path: {usage}
 
 models:
-  a1: {{provider: gemini, litellm_model: gemini/a1, api_key_env: GEMINI_API_KEY, max_tokens: 100}}
-  a2: {{provider: gemini, litellm_model: gemini/a2, api_key_env: GEMINI_API_KEY, max_tokens: 100}}
-  m1: {{provider: mistral, litellm_model: mistral/m1, api_key_env: MISTRAL_API_KEY, max_tokens: 100}}
-  g1: {{provider: groq, litellm_model: groq/g1, api_key_env: GROQ_API_KEY, max_tokens: 100}}
+  a1: {{provider: gemini, litellm_model: gemini/a1, api_key_env: GEMINI_API_KEY, max_tokens: 100, max_input_tokens: 1000}}
+  a2: {{provider: gemini, litellm_model: gemini/a2, api_key_env: GEMINI_API_KEY, max_tokens: 100, max_input_tokens: 1000}}
+  m1: {{provider: mistral, litellm_model: mistral/m1, api_key_env: MISTRAL_API_KEY, max_tokens: 100, max_input_tokens: 1000}}
+  g1: {{provider: groq, litellm_model: groq/g1, api_key_env: GROQ_API_KEY, max_tokens: 100, max_input_tokens: 1000}}
 
 roles:
   r1:

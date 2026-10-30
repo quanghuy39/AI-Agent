@@ -45,7 +45,7 @@ REQUIRED_SETTINGS = [
     "cooldown_whole_provider",
     "allowed_fails",
 ]
-REQUIRED_MODEL_FIELDS = ["provider", "litellm_model", "api_key_env", "max_tokens"]
+REQUIRED_MODEL_FIELDS = ["provider", "litellm_model", "api_key_env", "max_tokens", "max_input_tokens"]
 
 # Ly do ghi vao fallback_reasons / LLMChainExhausted.attempts
 REASON_COOLDOWN = "cooldown"

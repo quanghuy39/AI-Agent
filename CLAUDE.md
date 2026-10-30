@@ -21,6 +21,9 @@ Trạng thái từng ngày: xem `PROGRESS.md`.
 - `runner/run_code.py` – chạy code AI: thư mục tạm, input chỉ đọc, bỏ biến bí mật, quét ast, timeout, meta.
 - `main.py` – luồng duy nhất: máy trạng thái understand → explore → plan → loop → synthesize → done, lưu `state.json`
   sau mỗi pha, chuyển exception thành mã thoát (`exit_code_for`).
+- `context_builder.py` – dựng prompt vừa ngân sách token theo role (`build_prompt`, `fit_prompt`, `min_input_tokens`,
+  `estimate_tokens`): `PROMPT_CUTS` khai báo phần cắt được và thứ tự cắt, bậc cuối thu nhỏ data summary bằng
+  `build_data_summary`. Mọi prompt gửi AI phải đi qua đây; đề gốc, câu hỏi hiện tại, contract không bao giờ cắt.
 - `analysis/` – `loop.py` (hàm của từng pha: hiểu đề, lập kế hoạch, giải từng câu, chấm meta, ghi sổ; `run_loop` và CLI
   chỉ gọi sang `main.py`), `meta_grader.py`.
 - `skills/analysis/` – `understand.md`, `plan.md`, `step.md`, `contract.md` (prompt), `schemas.py` (ProblemRestatement,
@@ -50,7 +53,8 @@ python tests/llm_eval/run_eval.py --list              # số case theo role
 python tests/llm_eval/run_eval.py --model <key> --role analysis [--limit N] [--resume] --yes   # GỌI API THẬT
 ```
 `main.py` và `analysis.loop` trả mã: 0 xong, 1 lỗi gọi AI hoặc lỗi R2, 2 hết hạn mức chuỗi model (chạy lại để tiếp tục),
-3 dừng (StopLoop: người dùng từ chối, prompt quá dài, `--sensitive` khác state, ...; hoặc bản tóm tắt lộ giá trị che).
+3 dừng (StopLoop: người dùng từ chối, prompt quá dài sau mọi bậc cắt, `--sensitive` khác state, ...; hoặc bản tóm tắt
+lộ giá trị che).
 Chạy lại: tiếp từ pha trong `state.json`; câu đã giải lấy từ `Ledger.results_by_question()` (chỉ kết quả valid).
 `--sensitive` chốt vào state ở lần chạy đầu, muốn đổi thì `--restart --sensitive ...`. `--restart` chuyển kết quả valid
 thành superseded và toàn bộ file `work/` sang `work/_superseded/<thời điểm>/`; decisions và run_log giữ nguyên.

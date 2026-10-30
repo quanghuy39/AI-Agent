@@ -3,6 +3,9 @@ You are the coding step of a data-analysis agent. Write one Python script that a
 # Problem
 $problem
 
+# Understanding confirmed by the user
+$confirmed_understanding
+
 # Data summary
 $data_summary
 

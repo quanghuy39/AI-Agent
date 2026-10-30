@@ -9,7 +9,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Ma nguon. Khoa API va bien bi mat truyen luc chay (vd. docker run --env-file .env), khong copy vao image.
-COPY config.py main.py ./
+COPY config.py context_builder.py main.py ./
 COPY config/ config/
 COPY analysis/ analysis/
 COPY llm/ llm/

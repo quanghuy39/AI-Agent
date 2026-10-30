@@ -15,7 +15,8 @@ from skills.analysis.schemas import AgentMeta, AnalysisPlan, AnalysisStep, Assum
 PLACEHOLDER_RE = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})")
 UNDERSTAND_VARS = {"problem": "", "previous_restatement": "", "user_corrections": ""}
 PLAN_VARS = {"problem": "", "data_summary": "", "confirmed_understanding": ""}
-STEP_VARS = {"problem": "", "data_summary": "", "confirmed_decisions": "", "previous_results": "",
+STEP_VARS = {"problem": "", "data_summary": "", "confirmed_understanding": "", "confirmed_decisions": "",
+             "previous_results": "",
              "question": "", "error_feedback": ""}
 ASSUMPTION = {"kind": "metric_definition", "text": "Doanh thu = tổng amount của đơn hoàn tất", "required": True}
 

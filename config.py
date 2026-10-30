@@ -111,6 +111,13 @@ PROMPT_SCHEMA_TOKENS = 700
 PROMPT_MARGIN = 0.10
 ANALYSIS_FEEDBACK_SHORT_CHARS = 600  # khi phai cat: error_feedback chi giu chung nay ky tu cuoi
 ANALYSIS_DECISION_SHORT_CHARS = 100  # khi phai cat: moi decision chi giu text ngan chung nay ky tu
+# context_builder: tran cua cac ban rut gon va bac cat cuoi (data summary)
+CONTEXT_SUMMARY_MAX_CHARS = (6000, 4500, 3000, 2000)  # bac cat data summary, gioi han ky tu giam dan
+CONTEXT_CORRECTIONS_MAX_CHARS = 1500  # tran user_corrections dua vao prompt, giu chinh sua moi nhat
+CONTEXT_CORRECTIONS_SHORT_CHARS = 400  # nhu tren, khi phai cat
+CONTEXT_PREVIOUS_MAX_RESULTS = 8     # khi phai cat: so ket qua moi nhat (cong ket qua cau hien tai phu thuoc)
+CONTEXT_PREVIOUS_MAX_FILES = 20      # khi phai cat: so file moi nhat trong work/
+CONTEXT_DECISIONS_MAX = 15           # khi phai cat: so decision giu lai
 # Cot che mac dinh theo bai (cong voi (SENSITIVE) trong dictionary va --sensitive); chi ap dung khi cot co that.
 ANALYSIS_DEFAULT_SENSITIVE = {"bai1": ["CUSTOMER.customer_id"]}
 # Module goc (phan truoc dau cham dau tien) bi cam import trong code AI.
