@@ -30,5 +30,7 @@ $contract
 - new_assumptions: choices you had to make that the confirmed decisions do not cover (kind, text, required).
 - cannot_answer_reason: only when the data cannot answer the question; then leave code empty.
 
+Answer every part of the question: each part must appear in result_summary or in an output file listed in
+output_files. If a part cannot be answered, say so in explanation.
 To use earlier results, read their files from the output directory; never copy their numbers into the code.
 Language: write explanation, method, can_be_wrong_if and assumption text in Vietnamese.

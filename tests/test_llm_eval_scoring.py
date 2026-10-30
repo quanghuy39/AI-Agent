@@ -12,7 +12,7 @@ import pytest
 
 import config
 from analysis import loop
-from llm import FakeLLM, LLMChainExhausted, LLMRequestError, structured, usage, use_fake
+from llm import FakeLLM, LLMChainExhausted, LLMRequestError, client, structured, usage, use_fake
 from skills.analysis import load_prompt, render_prompt
 from tests.llm_eval import cases_report, cases_slide, common, run_eval, summary, synth_data
 from tests.llm_eval.cases_analysis import CASES as ANALYSIS_CASES
@@ -476,7 +476,7 @@ def test_b_json_invalid_fails_everything(role, data_dir):
 
 # ---------- (c) run_eval tron ven voi FakeLLM ----------
 
-MODEL = "groq_gpt_oss_120b"  # co trong chain analysis, report va slide cua llm.yaml? kiem tra duoi
+MODEL = "gemini_3_5_flash_lite"  # co trong chain analysis va report cua llm.yaml (kiem tra o test duoi)
 
 
 def _lines(results_dir):
@@ -512,7 +512,8 @@ def test_c_run_eval_full_resume_and_stop(tmp_path, capsys):
     assert lines[0]["n_custom_checks"] == lines[0]["n_can_be_wrong_if"] == 1 and lines[0]["structural_errors"] == []
     assert "code" not in lines[0]
     assert lines[0]["finish_reason"] == "stop" and lines[0]["syntax_error_context"] is None
-    assert sleeps == [pytest.approx(60 / 30 * 1.2)]  # rpm=30 trong llm.yaml
+    rpm = client._load_config(client._config_path())["models"][MODEL]["limits"]["rpm"]
+    assert sleeps == [pytest.approx(60 / rpm * 1.2)]  # gian cach theo rpm trong llm.yaml
     assert [c["model_key"] for c in fake.calls] == [MODEL, MODEL]
 
     # --resume: bo qua 2 case da co; JSON sai o case 3 duoc ghi lai, khong dung
@@ -541,7 +542,7 @@ def test_c_run_eval_full_resume_and_stop(tmp_path, capsys):
 
 
 def test_c_run_eval_request_error_stops(tmp_path, capsys):
-    err = LLMRequestError("bị từ chối", model_key=MODEL, provider="groq", status_code=401)
+    err = LLMRequestError("bị từ chối", model_key=MODEL, provider="gemini", status_code=401)
     res = tmp_path / "results"
     with use_fake(FakeLLM([err])):
         code = run_eval.main(["--model", MODEL, "--role", "report", "--results-dir", str(res), "--yes"],

@@ -101,10 +101,11 @@ roles:
     chain:
       - {model: gemini_3_5_flash_lite, validated: true}
       - {model: mistral_codestral, validated: false}
-      - {model: groq_gpt_oss_120b, validated: false}
       - {model: gemini_3_8_flash, validated: false}
       - {model: gemma_4_31b, validated: false}
       # openrouter_cohere_north_mini_code bỏ khỏi analysis 30/10/2026 (rớt json_valid); vẫn ở report/slide
+      # groq_gpt_oss_120b bỏ khỏi analysis 30/10/2026: chưa qua kiểm định, tpm 8000 quá nhỏ cho prompt analysis,
+      # làm trần ngữ cảnh 5000 khiến bài 1 dừng ở Q4; vẫn ở report/slide
 
   report:
     chain:

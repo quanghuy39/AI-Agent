@@ -36,6 +36,8 @@ Required checks
 - Write at least as many custom checks as items in can_be_wrong_if; each custom check name must restate the item it tests.
 - Each filter or join has a row_count check; give expected_ratio when the step should drop many rows.
 - Each join of two tables has a join check.
+- When you join with an intermediate table (e.g. an aggregate), first write it to AGENT_OUTPUT_DIR and declare
+  that file in the join check; left/right must be the tables actually joined.
 - Each group-by aggregation has a sum check when the overall total can be computed.
 
 Do not use backslashes inside f-string expressions; build strings with plain concatenation or str.format.
