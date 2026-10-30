@@ -2,7 +2,9 @@
 # Số liệu hạn mức lấy từ trang hạn mức của từng hãng ngày 27/10/2026. Các số khởi điểm chỉnh sau khi chạy thật.
 
 settings:
-  enforce_validation: false   # false: chạy cả model chưa qua kiểm định. Ngày 5 chốt chuỗi xong thì đổi thành true.
+  # 30/10/2026: chỉ gemini_3_5_flash_lite qua kiểm định analysis (9/12); codestral 8/12, rớt meta_valid 75% < 80%;
+  # không bật enforce vì report/slide chưa có model kiểm định (bật được thì làm ở Ngày 7)
+  enforce_validation: false   # false: chạy cả model chưa qua kiểm định.
   timeout_s: 60
   num_retries: 1              # số lần thử lại khi 5xx hoặc timeout, trước khi chuyển hãng kế
   retry_after_s: 5
@@ -27,7 +29,7 @@ models:
     limits: {rpm: 5, rpd: 20, tpm: 250000, tpd: null}
     max_input_tokens: 30000
     max_tokens: 4000
-    data_note: "Gói free: Google dùng dữ liệu để cải thiện sản phẩm, không tắt được. Chỉ gửi dữ liệu không nhạy cảm. Gọi thật 28/10/2026 trả 503 quá tải nhất thời (tên model và khóa đúng)."
+    data_note: "Gói free: Google dùng dữ liệu để cải thiện sản phẩm, không tắt được. Chỉ gửi dữ liệu không nhạy cảm. Gọi thật 28/10/2026 trả 503 quá tải nhất thời (tên model và khóa đúng). 30/10/2026: lỗi 503/408 phía Google kể cả prompt ngắn, tạm xếp cuối chuỗi analysis."
 
   gemini_3_5_flash_lite:
     provider: gemini
@@ -45,7 +47,7 @@ models:
     limits: {rpm: 30, rpd: 14400, tpm: 16000, tpd: null}
     max_input_tokens: 9000      # tpm chỉ 16K, gồm cả prompt lẫn phản hồi
     max_tokens: 3000
-    data_note: "Như trên. Gọi thật 28/10/2026 trả 500 Internal error sau 36 giây, cần thử lại."
+    data_note: "Như trên. Gọi thật 28/10/2026 trả 500 Internal error sau 36 giây, cần thử lại. 30/10/2026: lỗi 503/408 phía Google kể cả prompt ngắn, tạm xếp cuối chuỗi analysis."
 
   mistral_codestral:
     provider: mistral
@@ -97,11 +99,12 @@ models:
 roles:
   analysis:
     chain:
-      - {model: gemini_3_8_flash, validated: false}
+      - {model: gemini_3_5_flash_lite, validated: true}
       - {model: mistral_codestral, validated: false}
-      - {model: gemma_4_31b, validated: false}
       - {model: groq_gpt_oss_120b, validated: false}
-      - {model: openrouter_cohere_north_mini_code, validated: false}
+      - {model: gemini_3_8_flash, validated: false}
+      - {model: gemma_4_31b, validated: false}
+      # openrouter_cohere_north_mini_code bỏ khỏi analysis 30/10/2026 (rớt json_valid); vẫn ở report/slide
 
   report:
     chain:

@@ -1,4 +1,4 @@
-# Ngưỡng ĐỀ XUẤT, người dùng chốt ở Ngày 5.
+# Ngưỡng đã chốt 30/10/2026.
 # Tỷ lệ đạt tối thiểu của từng tiêu chí (0..1), tính trên các case mà tiêu chí đó áp dụng được.
 # Mục "all" áp dụng cho mọi role.
 
@@ -9,6 +9,9 @@ analysis:
   code_runs: 0.8
   value_correct: 0.6
   no_invented_columns: 0.9
+  meta_valid: 0.8
+  # no_forbidden, handles_missing_column, assumptions_present: chỉ ghi nhận (mỗi tiêu chí chỉ 1 case),
+  # không đặt ngưỡng, không dùng để loại model.
 
 report:
   placeholder_ok: 0.9
