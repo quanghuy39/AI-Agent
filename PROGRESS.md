@@ -11,7 +11,7 @@ Cập nhật: 30/10/2026. Nguồn: git log, code trong repo, tóm tắt cuối n
 | 3 | Xong | `ledger/` (hồ sơ bài ở `output/<bài>/`), usage log nối vào `run_log.jsonl`, Dockerfile build và chạy được. 238 test pass. |
 | 4 | Xong | `profiling/` (quality, dictionary, flags, relationships, data_summary), `validators/`, khoảng hợp lệ trong dictionary; `tests.grade_bai0b` đạt 5/5 lỗi cài sẵn. 476 test pass. |
 | 5 | Xong | Runner, skill phân tích, meta_grader, `analysis.loop`, fit_prompt, bộ kiểm định theo skill thật; chốt chuỗi analysis. Bài 0a ĐẠT toàn bộ; bài 1 chạy trọn 4 câu, số liệu đúng, phán đoán BI chưa đạt. 645 test pass. |
-| 6 | Đang làm | Mục 1 xong (chưa commit): điều phối theo pha trong `main.py`, chạy tiếp được, `--fake` tách hồ sơ. 702 test pass. Còn lại theo ghi chú: tách `accept_plan`/`_add_confirmed` thành pending (dựa `pending_required()`), quality_flags thành decision, đồng bộ hồ sơ lên R2; thêm các bài học ở mục "Bài học chung cho Ngày 6". Phạm vi đầy đủ: chưa xác nhận. |
+| 6 | Đang làm | Mục 1, 2, 3 xong (chưa commit): điều phối theo pha, chạy tiếp được, `--fake` tách hồ sơ, điểm dừng xác nhận, decision chờ xác nhận, cờ chất lượng thành decision. 753 test pass. Còn lại theo ghi chú: mục 4 (context_builder), mục 5 (đồng bộ hồ sơ lên R2); thêm các bài học ở mục "Bài học chung cho Ngày 6". Phạm vi đầy đủ: chưa xác nhận. |
 | 7 | Chưa | Chưa xác nhận (thư mục `report/`, `slides/` mới có `__init__.py`). |
 | 8 | Chưa | Chưa xác nhận (ghi chú: `LLM_CONFIG_PATH` kiểu Windows không dùng được trong container). |
 
@@ -97,6 +97,41 @@ Mục 1, điều phối theo pha (chưa commit, mới kiểm bằng FakeLLM và 
 - Dictionary bài 1 (bản trong `cache/input/bai1/`) không có thẻ `(SENSITIVE)`: `CUSTOMER.customer_id` chỉ có `(PK)`. Cột
   này được che nhờ `config.ANALYSIS_DEFAULT_SENSITIVE`; `ORDER.customer_id` che theo quan hệ.
 
+Mục 2 + 3, điểm dừng và decision chờ xác nhận (chưa commit, kiểm bằng FakeLLM, R2 giả và `main.py --fake` trên `bai0a`;
+chưa chạy với AI thật):
+- Giả định của kế hoạch, khoảng hợp lệ và cờ mức flag được ghi `pending` vào `decisions.json` TRƯỚC khi hỏi; `_add_confirmed`
+  đã tách thành `_add_pending` và `_confirm_decision`. `pending_required()` còn mục thì không vào pha loop
+  (`require_confirmed`); chạy tiếp chỉ hỏi phần còn pending, kể cả decision còn lại khi đang ở pha loop.
+- Thứ tự hỏi ở pha plan: định nghĩa chỉ số → xử lý bất thường → giả định khác và khoảng hợp lệ → danh sách câu hỏi nhỏ.
+  `metric_definition` và `anomaly_handling` hỏi từng cái (y / s gõ nội dung khác / n dừng); `assumption` và khoảng hợp lệ
+  in danh sách đánh số (y chấp nhận hết, gõ số để sửa, n dừng).
+- Giả định mới của bước giải cũng đi qua pending và cùng cách hỏi.
+- Mỗi cờ có `source_key` = `code|bảng|cột|liên quan`, không chứa số đếm, duy nhất kể cả `join_right_*` và
+  `relationship_rejected`. Decision có `source_key` tùy chọn; cờ flag thành decision `anomaly_handling` pending, required,
+  không tạo lại khi chạy lại profiling. Giả định AI viết có `source_key` băm từ nội dung gốc, để chọn s rồi chạy lại không
+  sinh lại bản gốc. Cờ info không tạo decision theo từng cờ, chỉ in ở điểm dừng xử lý bất thường.
+- Điểm dừng xử lý bất thường luôn dừng khi có lưu ý: không có decision `anomaly_handling` (0 cờ flag, AI không đề xuất) mà
+  có cờ info thì hỏi một câu "Chấp nhận giữ nguyên dữ liệu với các lưu ý trên?" (y/s/n), lưu một decision required với
+  `source_key` cố định `keep_data|info_flags`, chạy lại không trùng. Decision lưu câu tường thuật vì được gửi cho AI. Decision
+  "chấp nhận R.. dù có cờ" không tính là đã qua điểm dừng này. Không có cờ nào: in "Không có bất thường", không hỏi.
+- Đề xuất của AI cho đúng một cờ: bản tóm tắt in `[key: ...]` cạnh cờ mức flag, kế hoạch có `flag_key`
+  (`PlanAssumption`), đề xuất nằm trong decision của cờ thay vì thành decision riêng. Không có đề xuất thì mặc định
+  "(chưa có đề xuất của AI) giữ nguyên, không xử lý riêng".
+- Báo cáo `data_profile.json` lưu trước khi có `source_key` được gắn khóa lúc nạp (`quality.ensure_flag_keys`, sinh lại cờ từ
+  báo cáo, không đọc dữ liệu, chỉ trong bộ nhớ).
+- `model_switched`: vòng lặp giữ `LLMResult`; đổi model → check `model_switched` mức flag (reason "model cũ → model mới")
+  trên kết quả kế tiếp, đi qua điểm dừng có cờ. Trúng cache không tính là đổi model (và không ghi đè model đang gắn).
+  `state.json` có `model`; chạy tiếp ở tiến trình mới khôi phục qua `llm.set_task_model`, nên model cũ cũng được thử trước.
+  Đổi model mà chưa có kết quả mang cờ thì state giữ model cũ, để dừng giữa chừng vẫn phát hiện được. `llm.fake.FromModel`
+  giả lập đổi model và trúng cache.
+- "Vẫn tiếp tục?": ghi decision "chấp nhận <R id> dù có cờ <tên>" pending trước khi hỏi; y → confirmed; n → dừng, chạy
+  lại sẽ hỏi lại thay vì đi tiếp.
+- `CAUTION_LEVEL` khác `chuan`: in cảnh báo chưa hỗ trợ. `--yes`: in cảnh báo tự xác nhận mọi decision.
+- Open_item "kế hoạch chưa được chấp nhận" (O1 của `bai0a`) tự đóng khi kế hoạch được chấp nhận hoặc khi qua được cổng
+  `require_confirmed` ở pha loop.
+- Số cờ theo hồ sơ hiện có (flag/info): bai0a 0/0, bai0b 7/2, bai1 0/3, bai2 0/6. Bài 1, 2 đi qua câu hỏi giữ nguyên dữ
+  liệu; bai0a in "Không có bất thường"; đường cờ flag thành decision chưa có bài thật nào ngoài bai0b để hỏi.
+
 ## Bài học chung cho Ngày 6
 Không viết riêng cho bài 1; đo trên bài 2.
 - So sánh giữa các nhóm phải nêu độ lớn khác biệt và mức chắc chắn.
@@ -131,15 +166,17 @@ Không viết riêng cho bài 1; đo trên bài 2.
 - Che giá trị chỉ thay chuỗi khớp nguyên văn (giá trị >= 4 ký tự); reason của check custom lấy nguyên từ meta.
 - Cache input có thể cũ nếu R2 lỗi kết nối (có cảnh báo `R2_UNREACHABLE`).
 - Runner và grader của bộ kiểm định không phải sandbox thật (quét tĩnh lách được bằng ghép chuỗi lúc chạy).
-- `--restart` có thể ra lại đúng kế hoạch cũ: prompt plan không đổi thì trúng cache của `ask_model`; từ chối kế hoạch
-  chưa có chỗ góp ý.
+- `--restart` có thể ra lại đúng kế hoạch cũ: prompt plan không đổi thì trúng cache của `ask_model`; từ chối danh sách
+  câu hỏi nhỏ chưa có chỗ góp ý.
+- Cờ mới xuất hiện sau khi kế hoạch đã được chấp nhận (profiling lại khi đang ở pha loop) chưa được đăng ký thành decision;
+  chỉ đăng ký ở pha plan.
+- Báo cáo cũ gắn `source_key` theo ngưỡng mặc định vì báo cáo không lưu ngưỡng đã dùng (`--set` lúc profiling).
 - Sau `--restart`, decisions cũ (giữ theo quyết định) vẫn được gửi cho AI trong `confirmed_decisions`.
 - Hồ sơ `bai1` tạo trước Ngày 6 không có `state.json` và `question_key`: lần chạy đầu giải lại mọi câu, kết quả cũ vẫn
   valid (có in cảnh báo); nên dùng `--restart`.
 - LƯU Ý hồ sơ thật `bai0a`: `state.json` đang chứa kế hoạch demo ở phase `loop` (`problem.json` cũng là bản demo, tạo từ
   `--fake` trước khi có `output/_fake/`), kèm open_item O2 "hết hạn mức" sinh ra từ báo sai. Lần chạy thật đầu tiên phải
   dùng `python main.py bai0a --restart`.
-- Open_item O1 "Kế hoạch chưa được chấp nhận" không tự đóng sau khi kế hoạch được chấp nhận: để mục 2.
 - Bài đã `done` thì chạy lại chỉ báo xong, không đối chiếu `--sensitive`.
 - Hạn mức: Gemini 3.8 Flash 20 lượt/ngày, OpenRouter 50 lượt/ngày (`config/llm.yaml`).
 - Chưa `docker build` lại sau khi thêm `COPY analysis/`.

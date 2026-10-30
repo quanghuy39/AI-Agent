@@ -30,6 +30,10 @@ class Assumption(_Model):
     required: bool = True
 
 
+class PlanAssumption(Assumption):
+    flag_key: str | None = None  # "[key: ...]" cua co chat luong ma gia dinh nay xu ly
+
+
 class ProposedRange(_Model):
     column: str = Field(pattern=r"^[^.\s][^.]*\..+$")  # "BANG.cot"
     min: float | None = None
@@ -56,7 +60,7 @@ class AnalysisPlan(_Model):
     understanding: str
     requirements: list[str]  # cac yeu cau cua de (ngan); moi yeu cau phai co sub_question covers
     sub_questions: list[SubQuestion]
-    assumptions: list[Assumption]
+    assumptions: list[PlanAssumption]
     proposed_ranges: list[ProposedRange] = Field(default_factory=list)
     cannot_answer_reason: str | None = None
 

@@ -175,7 +175,8 @@ def test_reject_plan_stops_without_runner(env, monkeypatch):
     code, fake = run([PLAN], yes=False, ask_user=lambda q: "n" if "kế hoạch" in q else "y")
     assert code == loop.STOPPED and len(fake.calls) == 2
     led = ledger(env)
-    assert led.decisions() == [] and any("chưa được chấp nhận" in o.text for o in led.open_items())
+    assert any("chưa được chấp nhận" in o.text for o in led.open_items())
+    assert [d.status.value for d in led.decisions()] == ["confirmed", "confirmed"]  # chi tu choi danh sach cau hoi
 
 
 def test_cannot_answer_plan_stops(env):
@@ -185,8 +186,7 @@ def test_cannot_answer_plan_stops(env):
 
 def test_flags_recorded_with_finding_and_n_stops(env):
     flagged = step(Q1_CODE.replace("'passed': bool((o['amount'] >= 0).all())", "'passed': False"), ["q1.csv"])
-    answers = iter(["y", "y", "n"])  # xac nhan de, chap nhan ke hoach, roi dung khi co co
-    code, _ = run([PLAN, flagged], yes=False, ask_user=lambda q: next(answers))
+    code, _ = run([PLAN, flagged], yes=False, ask_user=lambda q: "n" if "tiếp tục" in q else "y")
     assert code == loop.STOPPED
     led = ledger(env)
     (r1,) = led.results()

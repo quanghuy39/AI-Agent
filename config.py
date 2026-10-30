@@ -99,6 +99,7 @@ RUNNER_META_MAX_BYTES = 200_000      # file meta (AGENT_META_PATH) lon hon thi b
 # Ho so cua --fake nam o output/_fake/<bai>/, tach khoi ho so that. Thu muc nay KHONG duoc dong bo len R2
 # (ham sync lam o muc 5 phai bo qua no).
 FAKE_OUTPUT_SUBDIR = "_fake"
+CAUTION_DEFAULT = "chuan"            # muc than trong duy nhat dang ho tro
 ANALYSIS_MAX_RETRIES = 3             # so lan goi lai AI cho moi cau hoi sau lan dau
 ANALYSIS_UNDERSTAND_MAX_RETRIES = 3  # so lan goi lai AI dien giai de sau lan dau, khi nguoi dung gop y
 ANALYSIS_FEEDBACK_STDERR_CHARS = 1500  # error_feedback chi giu chung nay ky tu cuoi cua stderr

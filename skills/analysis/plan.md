@@ -23,7 +23,8 @@ $contract
    - metric_definition: how a metric is defined (what is counted or summed, which field, numerator and
      denominator, gross or net, ...).
    - assumption: scope and interpretation (time period, which records are included, grouping, ...).
-   - anomaly_handling: what to do with data problems listed in the data summary flags.
+   - anomaly_handling: what to do with data problems listed in the data summary flags. When it handles one flag,
+     copy that flag's [key: ...] value into flag_key.
    Set required=true when the answer changes materially with the choice.
 4. proposed_ranges: for numeric columns you will use that have no "valid range" in the data summary,
    propose a plausible range ("TABLE.column", min and/or max, reason). Skip columns that already have one.

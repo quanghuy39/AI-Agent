@@ -247,9 +247,9 @@ class Ledger:
 
     # ---------- quyet dinh ----------
 
-    def add_decision(self, kind, text, required=True):
+    def add_decision(self, kind, text, required=True, source_key=None):
         decisions = self.decisions()
-        d = Decision(id=_next_id("D", decisions), kind=kind, text=text, required=required)
+        d = Decision(id=_next_id("D", decisions), kind=kind, text=text, required=required, source_key=source_key)
         self._write_models(DECISIONS, decisions + [d])
         return d
 
@@ -258,6 +258,16 @@ class Ledger:
         for i, d in enumerate(decisions):
             if d.id == decision_id:
                 decisions[i] = d.confirm(at)
+                self._write_models(DECISIONS, decisions)
+                return decisions[i]
+        raise KeyError(f"không có quyết định {decision_id}")
+
+    def revise_decision(self, decision_id, text, at=None):
+        """Thay noi dung bang noi dung nguoi dung go va xac nhan luon. source_key giu nguyen."""
+        decisions = self.decisions()
+        for i, d in enumerate(decisions):
+            if d.id == decision_id:
+                decisions[i] = Decision.model_validate({**d.model_dump(), "text": text}).confirm(at)
                 self._write_models(DECISIONS, decisions)
                 return decisions[i]
         raise KeyError(f"không có quyết định {decision_id}")

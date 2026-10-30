@@ -295,6 +295,23 @@ def test_g_cache_hit_binds_task(env):
     assert client._task_models["t9"] == "a1"
 
 
+def test_g_cache_hit_from_other_model_is_not_a_switch(env):
+    client.ask_model(msgs(), "r1")  # a1 tra loi, vao cache
+    client._task_models["t1"] = "m1"
+    r = client.ask_model(msgs(), "r1", task_id="t1")
+    assert (r.cached, r.model_key, r.model_switched) == (True, "a1", False)
+    assert client._task_models["t1"] == "m1"  # khong ghi de model dang gan
+
+
+def test_set_task_model_restores_binding_for_new_process(env):
+    client.set_task_model("t1", "m1")
+    env.llm.plan["mistral/m1"] = ["429"]
+    r = client.ask_model(msgs(), "r1", task_id="t1")
+    assert (r.model_key, r.model_switched, r.previous_model) == ("a1", True, "m1")
+    client.set_task_model("t1", None)
+    assert "t1" not in client._task_models
+
+
 def test_h_pinned_model_429_switches_and_rebinds(env):
     client._task_models["t1"] = "m1"
     env.llm.plan["mistral/m1"] = ["429"]

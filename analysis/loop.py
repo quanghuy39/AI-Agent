@@ -10,6 +10,7 @@ Moi chuoi dua lai cho AI deu qua mask_text: gia tri that cua cot che -> [đã ch
 """
 
 import argparse
+import hashlib
 import math
 import re
 import sys
@@ -22,6 +23,7 @@ from analysis.meta_grader import grade_meta, read_local_table
 from ledger import DecisionStatus, Ledger, ResultStatus
 from ledger.ledger import SUPERSEDED_DIR
 from ledger.schema import now_iso
+from profiling import flags as fl
 from profiling import quality
 from profiling.data_summary import build_data_summary
 from runner import run_code as runner
@@ -34,6 +36,15 @@ PROBLEM_FILE = "de_bai.md"
 ROLE = "analysis"
 DONE, ERROR, EXHAUSTED, STOPPED = 0, 1, 2, 3
 CHAIN_OPEN_ITEM = "hết hạn mức chuỗi, chạy tiếp sau (chuỗi model analysis)"
+PLAN_OPEN_ITEM = "Kế hoạch phân tích chưa được chấp nhận; chạy lại để xem lại, hoặc --restart để làm lại từ đầu."
+PENDING_OPEN_ITEM = "Còn decision chờ xác nhận; chạy lại để trả lời tiếp."
+YES = ("y", "yes", "c", "co", "có")
+NO_HANDLING = "(chưa có đề xuất của AI) giữ nguyên, không xử lý riêng"  # cach xu ly mac dinh cua co muc flag
+# Diem dung xu ly bat thuong khi chi co co info: hoi bang QUESTION, luu TEXT (dua cho AI nen phai tu du nghia)
+KEEP_DATA_KEY = "keep_data|info_flags"
+KEEP_DATA_QUESTION = "Chấp nhận giữ nguyên dữ liệu với các lưu ý trên?"
+KEEP_DATA_TEXT = "Giữ nguyên dữ liệu, không xử lý riêng các lưu ý về chất lượng dữ liệu"
+ACCEPT_FLAGS_KEY = "accept_flags|"  # decision "chap nhan R.. du co co", sinh sau khi giai, khong thuoc diem dung nay
 
 
 class StopLoop(Exception):
@@ -56,6 +67,9 @@ class Context:
     decisions: list = field(default_factory=list)   # dong "- D1 [kind] text" da xac nhan
     input_limit: int | None = None                  # max_input_tokens nho nhat cua chuoi analysis (nap lan dau)
     sensitive: list = field(default_factory=list)   # "BANG.cot" da dung: --sensitive + mac dinh cua bai
+    report: dict = field(default_factory=dict, repr=False)  # data_quality_report
+    model: str | None = None                        # model cua lan goi AI gan nhat (khong tinh trung cache)
+    switched_from: str | None = None                # model cu khi da doi model ma chua gan co vao ket qua
     _mask_re: object = field(default=None, repr=False)
 
     def mask(self, text):
@@ -125,6 +139,7 @@ def load_context(task, sensitive=None):
     report = profile.get(quality.REPORT_KEY) if isinstance(profile, dict) else None
     if report is None:
         report = quality.profile_problem(task)
+    quality.ensure_flag_keys(report)
     columns = _sensitive(task, report, sensitive)
     try:
         summary = build_data_summary(report, sensitive=columns, max_chars=config.SUMMARY_MAX_CHARS)
@@ -133,7 +148,7 @@ def load_context(task, sensitive=None):
     prefix = f"{r2.get_r2_settings()['R2_INPUT_PREFIX']}{task}/"
     ctx = Context(task=task, problem=problem, summary=summary, ledger=led, input_dir=r2.CACHE_DIR / prefix,
                   work_dir=runner.OUTPUT_DIR / task / "work",
-                  masked_values=_masked_values(report, summary["masked_columns"]), sensitive=columns,
+                  masked_values=_masked_values(report, summary["masked_columns"]), sensitive=columns, report=report,
                   decisions=[_decision_line(d) for d in led.decisions() if d.status == DecisionStatus.CONFIRMED])
     led.log_event("analysis", "load_context", inputs={"task": task},
                   extra={"summary_chars": summary["chars"], "level": summary["level"],
@@ -147,7 +162,7 @@ def confirm(question, yes=False, ask_user=input):
     if yes:
         print(f"{question} [y/n] y (--yes)")
         return True
-    return ask_user(f"{question} [y/n] ").strip().lower() in ("y", "yes", "c", "co", "có")
+    return ask_user(f"{question} [y/n] ").strip().lower() in YES
 
 
 def _render(ctx, prompt_name, **variables):
@@ -156,8 +171,22 @@ def _render(ctx, prompt_name, **variables):
                          **{k: ctx.mask(v) for k, v in variables.items()})
 
 
+def _note_model(ctx, result):
+    """Theo doi model da dung. Con co doi model chua gan vao ket qua thi state giu model cu, de dung giua chung
+    roi chay tiep van phat hien duoc. Trung cache khong tinh."""
+    if result.cached:
+        return
+    if result.model_switched and ctx.switched_from is None:
+        ctx.switched_from = result.previous_model
+    ctx.model = result.model_key
+    if ctx.switched_from is None and ctx.ledger.get_state().model != ctx.model:
+        ctx.ledger.update_state(model=ctx.model)
+
+
 def _call(ctx, text, schema):
-    return llm.ask_model([{"role": "user", "content": text}], role=ROLE, json_schema=schema, task_id=ctx.task).data
+    result = llm.ask_model([{"role": "user", "content": text}], role=ROLE, json_schema=schema, task_id=ctx.task)
+    _note_model(ctx, result)
+    return result.data
 
 
 def _ask(ctx, prompt_name, schema, **variables):
@@ -206,15 +235,116 @@ def _decision_line(d):
     return f"- {d.id} [{d.kind.value}] {d.text}"
 
 
-def _add_confirmed(ctx, kind, text, required=True):
-    """Ghi va xac nhan quyet dinh; da co quyet dinh confirmed cung noi dung thi khong them (chay lai, --restart)."""
+# ---------- decision cho xac nhan ----------
+
+def _text_key(kind, text):
+    """source_key cua gia dinh do AI viet: tu noi dung goc, nen sua noi dung (chon s) roi chay lai khong tao trung."""
+    return f"ai|{kind}|{hashlib.sha1(text.encode('utf-8')).hexdigest()[:12]}"
+
+
+def _add_pending(ctx, kind, text, required=True, source_key=None):
+    """Ghi decision pending; da co (cung source_key, hoac cung kind va noi dung) thi tra ve decision do."""
     for d in ctx.ledger.decisions():
-        if d.status == DecisionStatus.CONFIRMED and d.kind == kind and d.text == text:
-            return d.id
-    d = ctx.ledger.add_decision(kind, text, required=required)
-    ctx.ledger.confirm_decision(d.id)
-    ctx.decisions.append(_decision_line(d))
-    return d.id
+        if (source_key and d.source_key == source_key) or (d.kind == kind and d.text == text):
+            return d
+    return ctx.ledger.add_decision(kind, text, required=required, source_key=source_key)
+
+
+def _confirm_decision(ctx, d, text=None):
+    """Xac nhan decision; co text thi thay bang noi dung nguoi dung go."""
+    if text:
+        ctx.ledger.revise_decision(d.id, text)
+    else:
+        ctx.ledger.confirm_decision(d.id)
+    ctx.decisions = [_decision_line(x) for x in ctx.ledger.decisions() if x.status == DecisionStatus.CONFIRMED]
+
+
+def _pending(ctx, kind):
+    return [d for d in ctx.ledger.decisions() if d.status == DecisionStatus.PENDING and d.kind == kind]
+
+
+def _stop_pending(ctx, open_item):
+    ctx.ledger.add_open_item_once(open_item)
+    ctx.ledger.log_event("analysis", "confirm_decisions", status="stopped")
+    raise StopLoop("Dừng ở bước xác nhận; chạy lại để trả lời tiếp các decision còn chờ.")
+
+
+def _review_each(ctx, kind, title, yes, ask_user, open_item):
+    """Hoi tung decision pending cua kind: y dong y, s go noi dung khac, n dung."""
+    items = _pending(ctx, kind)
+    if items:
+        print(f"\n{title}:")
+    for d in items:
+        print(f"  {d.id}: {KEEP_DATA_QUESTION if d.source_key == KEEP_DATA_KEY else d.text}")
+        text = None
+        while not yes:
+            answer = ask_user("  y = đồng ý, s = gõ nội dung khác, n = dừng: ").strip().lower()
+            if answer in YES:
+                break
+            if answer == "n":
+                _stop_pending(ctx, open_item)
+            text = ask_user("  Nội dung mới: ").strip() if answer == "s" else None
+            if text:
+                break
+        _confirm_decision(ctx, d, text)
+
+
+def _review_list(ctx, title, yes, ask_user, open_item):
+    """Hoi gop cac gia dinh con lai: in danh sach danh so; y chap nhan tat ca, go so de sua tung cai, n dung."""
+    items = _pending(ctx, "assumption")
+    while items:
+        print(f"\n{title}:")
+        for i, d in enumerate(items, 1):
+            print(f"  {i}. {d.text}")
+        answer = "y" if yes else ask_user("  y = chấp nhận tất cả, số = sửa mục đó, n = dừng: ").strip().lower()
+        if answer in YES:
+            for d in items:
+                _confirm_decision(ctx, d)
+        elif answer == "n":
+            _stop_pending(ctx, open_item)
+        elif answer.isdigit() and 1 <= int(answer) <= len(items):
+            text = ask_user("  Nội dung mới: ").strip()
+            if text:
+                _confirm_decision(ctx, items[int(answer) - 1], text)
+        items = _pending(ctx, "assumption")
+
+
+def _info_flags(ctx):
+    return [f for f in fl.all_flags(ctx.report) if f["severity"] == fl.INFO]
+
+
+def _has_anomaly_decision(ctx):
+    return any(d.kind == "anomaly_handling" and not (d.source_key or "").startswith(ACCEPT_FLAGS_KEY)
+               for d in ctx.ledger.decisions())
+
+
+def _print_info_flags(ctx):
+    items = _info_flags(ctx)
+    if items:
+        print("\nLưu ý về dữ liệu:")
+        for f in items:
+            print(f"  [{f['code']}] {f['message']}")
+    elif not _has_anomaly_decision(ctx):  # co muc flag luon co decision: khong co decision nghia la khong co co nao
+        print("\nKhông có bất thường.")
+
+
+def review_decisions(ctx, yes, ask_user, open_item, show_info=False):
+    """Hoi moi decision pending theo thu tu: dinh nghia chi so, xu ly bat thuong, gia dinh con lai."""
+    _review_each(ctx, "metric_definition", "Định nghĩa chỉ số", yes, ask_user, open_item)
+    if show_info:
+        _print_info_flags(ctx)
+    _review_each(ctx, "anomaly_handling", "Xử lý dữ liệu bất thường", yes, ask_user, open_item)
+    _review_list(ctx, "Giả định khác và khoảng hợp lệ", yes, ask_user, open_item)
+
+
+def require_confirmed(ctx):
+    """Con decision bat buoc pending thi khong di tiep; het thi dong cac muc mo cua buoc xac nhan."""
+    pending = ctx.ledger.pending_required()
+    if pending:
+        ctx.ledger.add_open_item_once(PENDING_OPEN_ITEM)
+        raise StopLoop(f"Còn decision bắt buộc chờ xác nhận: {', '.join(d.id for d in pending)}.")
+    ctx.ledger.close_open_items_with_text(PLAN_OPEN_ITEM)
+    ctx.ledger.close_open_items_with_text(PENDING_OPEN_ITEM)
 
 
 # ---------- hieu de ----------
@@ -324,17 +454,39 @@ def check_plan(ctx, plan):
         raise StopLoop(str(e)) from None
 
 
+def register_plan_decisions(ctx, plan):
+    """Ghi pending (chua hoi): gia dinh, khoang hop le, co muc flag. De xuat cua AI cho dung mot co (flag_key) nam
+    trong decision cua co do, khong thanh decision rieng. Chay lai khong tao trung."""
+    flagged = [f for f in fl.all_flags(ctx.report) if f["severity"] == fl.FLAG]
+    keys = {f["source_key"] for f in flagged}
+    proposals = {}
+    for a in plan.assumptions:
+        if a.kind == "anomaly_handling" and a.flag_key in keys:
+            proposals.setdefault(a.flag_key, a)
+    for a in plan.assumptions:
+        if proposals.get(a.flag_key) is not a:
+            _add_pending(ctx, a.kind, a.text, a.required, _text_key(a.kind, a.text))
+    for r in plan.proposed_ranges:
+        text = f"Khoảng hợp lệ của {r.column}: {_fmt_bounds(r)} ({r.reason})"
+        _add_pending(ctx, "assumption", text, True, _text_key("assumption", text))
+    for f in flagged:
+        proposal = proposals.get(f["source_key"])
+        _add_pending(ctx, "anomaly_handling", f"{f['message']} → Xử lý: {proposal.text if proposal else NO_HANDLING}",
+                     True, f["source_key"])
+    if _info_flags(ctx) and not _has_anomaly_decision(ctx):  # diem dung nay luon dung khi co luu y
+        _add_pending(ctx, "anomaly_handling", KEEP_DATA_TEXT, True, KEEP_DATA_KEY)
+
+
 def accept_plan(ctx, plan, yes, ask_user):
+    """Hoi cac decision con pending, roi danh sach cau hoi nho. Chay lai chi hoi phan chua xong."""
+    register_plan_decisions(ctx, plan)
     print_plan(plan)
-    if not confirm("Chấp nhận kế hoạch và các giả định?", yes, ask_user):
-        ctx.ledger.add_open_item_once("Kế hoạch phân tích chưa được chấp nhận; chạy lại để xem lại, "
-                                      "hoặc --restart để làm lại từ đầu.")
+    review_decisions(ctx, yes, ask_user, PLAN_OPEN_ITEM, show_info=True)
+    if not confirm("Chấp nhận danh sách câu hỏi nhỏ của kế hoạch?", yes, ask_user):
+        ctx.ledger.add_open_item_once(PLAN_OPEN_ITEM)
         ctx.ledger.log_event("analysis", "confirm_plan", status="rejected")
         raise StopLoop("Người dùng không chấp nhận kế hoạch.")
-    for a in plan.assumptions:
-        _add_confirmed(ctx, a.kind, a.text, a.required)
-    for r in plan.proposed_ranges:
-        _add_confirmed(ctx, "assumption", f"Khoảng hợp lệ của {r.column}: {_fmt_bounds(r)} ({r.reason})")
+    require_confirmed(ctx)
     ctx.ledger.log_event("analysis", "confirm_plan", extra={"n_decisions": len(ctx.decisions)})
 
 
@@ -458,34 +610,47 @@ def solve_question(ctx, q, results_by_key, max_retries, yes, ask_user):
     raise StopLoop(f"{q.key}: hết {max_retries} lần thử lại.")
 
 
+def _flag_model_switch(ctx, grade):
+    """Doi model tu ket qua truoc: them check flag de di qua diem dung co co."""
+    if ctx.switched_from and ctx.switched_from != ctx.model:
+        reason = f"{ctx.switched_from} → {ctx.model}"
+        grade.checks.append({"name": "model_switched", "status": "flag", "reason": reason})
+        grade.flags.append(f"model_switched: {reason}")
+
+
 def _record(ctx, q, step, run, grade, results_by_key, yes, ask_user):
     if step.new_assumptions:
-        print(f"{q.key}: AI đưa thêm giả định:")
+        print(f"{q.key}: AI đưa thêm giả định.")
         for a in step.new_assumptions:
-            print(f"  [{a.kind}{', bắt buộc' if a.required else ''}] {a.text}")
-        if not confirm("Chấp nhận các giả định mới?", yes, ask_user):
-            ctx.ledger.add_open_item(f"{q.key}: giả định mới chưa được chấp nhận.")
-            raise StopLoop(f"{q.key}: người dùng không chấp nhận giả định mới.")
-        for a in step.new_assumptions:
-            _add_confirmed(ctx, a.kind, a.text, a.required)
+            _add_pending(ctx, a.kind, a.text, a.required, _text_key(a.kind, a.text))
+        review_decisions(ctx, yes, ask_user, PENDING_OPEN_ITEM)
 
+    _flag_model_switch(ctx, grade)
     entry = ctx.ledger.add_result(
         q.question, step.method, grade.result_summary, grade.checks,
         depends_on=[results_by_key[d] for d in q.depends_on],
         output_path="; ".join(_rel(ctx, p) for p in run.files_created) or None,
         code_file=_rel(ctx, run.code_path), question_key=q.key)
     ctx.ledger.close_open_items_with_text(CHAIN_OPEN_ITEM)  # da chay tiep duoc: muc nay het y nghia
+    if ctx.model:
+        ctx.ledger.update_state(model=ctx.model)
+    ctx.switched_from = None
     ctx.ledger.log_event("analysis", "result", inputs={"question": q.key}, code_file=entry.code_file,
                          status="flag" if grade.flags else "ok", extra={"result_id": entry.id})
     if grade.flags:
         print(f"{q.key} ({entry.id}) có cờ:")
         for f in grade.flags:
             print(f"  - {f}")
-        ctx.ledger.add_finding(f"{entry.id} có {len(grade.flags)} check bị cờ: "
-                               + "; ".join(c["name"] for c in grade.checks if c["status"] == "flag"),
+        names = [c["name"] for c in grade.checks if c["status"] == "flag"]
+        ctx.ledger.add_finding(f"{entry.id} có {len(grade.flags)} check bị cờ: " + "; ".join(names),
                                "hypothesis", result_ids=[entry.id])
+        # pending truoc khi hoi: tra loi n thi chay lai se hoi lai, khong lang le di tiep
+        d = _add_pending(ctx, "anomaly_handling", f"chấp nhận {entry.id} dù có cờ {', '.join(names)}",
+                         source_key=f"{ACCEPT_FLAGS_KEY}{entry.id}")
         if not confirm("Vẫn tiếp tục?", yes, ask_user):
+            ctx.ledger.add_open_item_once(PENDING_OPEN_ITEM)
             raise StopLoop(f"Dừng sau {entry.id} theo yêu cầu (có cờ).")
+        _confirm_decision(ctx, d)
     return entry.id
 
 

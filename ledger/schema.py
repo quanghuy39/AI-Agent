@@ -118,6 +118,7 @@ class Decision(_Model):
     kind: DecisionKind
     text: str
     required: bool = True
+    source_key: str | None = None  # nguon cua quyet dinh (co chat luong, gia dinh cua AI), de khong tao trung
     status: DecisionStatus = DecisionStatus.PENDING
     created_at: str = Field(default_factory=now_iso)
     confirmed_at: str | None = None
@@ -177,6 +178,7 @@ class RunState(_Model):
     phase: Phase
     plan: dict[str, Any] | None = None  # AnalysisPlan.model_dump
     sensitive: list[str] | None = None  # cot che "BANG.cot" cua lan chay dau; None: chua chot
+    model: str | None = None  # model da dung gan nhat, de so doi model khi chay tiep o tien trinh moi
     updated_at: str = Field(default_factory=now_iso)
 
     @field_validator("updated_at")

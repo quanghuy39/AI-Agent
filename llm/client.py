@@ -73,6 +73,7 @@ class LLMResult:
     cached: bool = False
     task_id: object = None
     model_switched: bool = False
+    previous_model: str | None = None  # model gan voi task truoc luot nay
     network_calls: int = 0  # so lan goi litellm.completion that su trong luot, ke ca lan loi
 
 
@@ -392,6 +393,14 @@ def _bind_task(task_id, model_key):
     return pinned is not None and pinned != model_key
 
 
+def set_task_model(task_id, model_key):
+    """Khoi phuc model da gan cua task khi chay tiep o tien trinh moi; None: bo gan."""
+    if model_key is None:
+        _task_models.pop(task_id, None)
+    else:
+        _task_models[task_id] = model_key
+
+
 def _from_cache(state, role, prompt_hash, json_schema, task_id):
     t0 = time.perf_counter()
     hit = cache.get(state.settings["cache_path"], prompt_hash)
@@ -404,6 +413,8 @@ def _from_cache(state, role, prompt_hash, json_schema, task_id):
         except ValidationError:
             log.warning("Bản ghi cache %s không còn khớp schema, bỏ qua.", prompt_hash[:12])
             return None
+    if task_id is not None:
+        _task_models.setdefault(task_id, hit["model_key"])  # cau tra loi cu khong phai la doi model
     return LLMResult(
         text=hit["text"],
         role=role,
@@ -420,7 +431,7 @@ def _from_cache(state, role, prompt_hash, json_schema, task_id):
         json_retries=0,
         cached=True,
         task_id=task_id,
-        model_switched=_bind_task(task_id, hit["model_key"]),
+        model_switched=False,
     )
 
 
@@ -440,6 +451,7 @@ def _to_cache(state, prompt_hash, result):
 def _make_result(state, role, model_key, response, data, reasons, json_retries, task_id, tally, t0):
     model = state.models[model_key]
     choice = response.choices[0]
+    previous = _task_models.get(task_id)
     return LLMResult(
         text=choice.message.content or "",
         role=role,
@@ -457,6 +469,7 @@ def _make_result(state, role, model_key, response, data, reasons, json_retries, 
         cached=False,
         task_id=task_id,
         model_switched=_bind_task(task_id, model_key),
+        previous_model=previous,
         network_calls=tally.network_calls,
     )
 

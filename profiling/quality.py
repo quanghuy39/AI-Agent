@@ -550,6 +550,23 @@ def _fk_columns(tables, dict_tables):
     return out
 
 
+def assign_flags(report, thresholds=None):
+    """Sinh co tu bao cao roi gan vao tung bang va cap bai."""
+    tables = report["tables"]
+    all_flags = flags.build_flags(report, thresholds)
+    for name, t in tables.items():
+        t["quality_flags"] = [f for f in all_flags if f["table"] == name]
+    report["quality_flags"] = [f for f in all_flags if f["table"] not in tables]  # cap bai
+    report["quality_flags_summary"] = flags.summarize_flags(all_flags, list(tables))
+
+
+def ensure_flag_keys(report):
+    """Bao cao luu truoc khi co source_key: sinh lai co tu chinh bao cao (khong doc du lieu, nguong mac dinh
+    vi bao cao khong luu nguong da dung). Chi sua trong bo nho."""
+    if any("source_key" not in f for f in flags.all_flags(report)):
+        assign_flags(report)
+
+
 def profile_problem(problem_id, include_samples=True, thresholds=None, ranges=None):
     """Profile moi bang .csv/.parquet trong input/<problem_id>/, ghi vao output/<problem_id>/data_profile.json.
     Co data dictionary thi doc truoc, dung PK cua no lam khoa va doi chieu tung bang (khoa "dictionary_check").
@@ -633,11 +650,7 @@ def profile_problem(problem_id, include_samples=True, thresholds=None, ranges=No
         "relationship_notes": rel["notes"],
         "range_checks": range_checks,
     }
-    all_flags = flags.build_flags(report, used_thresholds)
-    for name, t in tables.items():
-        t["quality_flags"] = [f for f in all_flags if f["table"] == name]
-    report["quality_flags"] = [f for f in all_flags if f["table"] not in tables]  # cap bai
-    report["quality_flags_summary"] = flags.summarize_flags(all_flags, list(tables))
+    assign_flags(report, used_thresholds)
 
     led = Ledger(OUTPUT_DIR / problem_id)
     profile = led.get_data_profile()

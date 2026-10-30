@@ -45,6 +45,8 @@ def _phase_plan(ctx, state, yes, ask_user):
 
 
 def _phase_loop(ctx, state, max_retries, yes, ask_user):
+    loop.review_decisions(ctx, yes, ask_user, loop.PENDING_OPEN_ITEM)  # con lai tu lan chay truoc
+    loop.require_confirmed(ctx)
     plan = AnalysisPlan.model_validate(state.plan)
     for q in loop.topo_order(plan.sub_questions):
         solved = ctx.ledger.results_by_question()
@@ -123,6 +125,14 @@ def _restart(led, sensitive):
     print(f"Làm lại từ đầu: {len(superseded)} kết quả cũ chuyển superseded.")
 
 
+def _warn_options(yes):
+    level = config.get_env("CAUTION_LEVEL", required=False, default=config.CAUTION_DEFAULT)
+    if level != config.CAUTION_DEFAULT:
+        print(f"Cảnh báo: CAUTION_LEVEL={level} chưa hỗ trợ, dùng mức chuẩn.")
+    if yes:
+        print("Cảnh báo: --yes tự xác nhận mọi decision.")
+
+
 def _load_state(led):
     state = led.get_state()
     if state is not None:
@@ -150,6 +160,7 @@ def run_task(task, sensitive=None, max_retries=None, yes=False, ask_user=input, 
     led = Ledger(runner.OUTPUT_DIR / task)
     led.attach_usage_log()  # moi luot goi AI ghi vao run_log.jsonl
     ctx = None
+    _warn_options(yes)
     try:
         if restart:
             _restart(led, sensitive)
@@ -157,6 +168,7 @@ def run_task(task, sensitive=None, max_retries=None, yes=False, ask_user=input, 
         if state.phase == Phase.DONE:
             print(f"Bài {task} đã xong. Dùng --restart để làm lại.")
             return loop.DONE
+        llm.set_task_model(task, state.model)  # so doi model voi lan chay truoc, ke ca khac tien trinh
         ctx = _open_context(led, task, state, sensitive)
         while state.phase != Phase.DONE:
             next_phase = _run_phase(ctx, state, max_retries, yes, ask_user)

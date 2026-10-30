@@ -1,6 +1,8 @@
 """Co chat luong du lieu theo nguong, sinh tu bao cao cua profile_problem. Chi BAO CAO.
 
-Moi co: code, severity ("flag" can xem | "info" luu y), table, column, message, value, threshold.
+Moi co: code, severity ("flag" can xem | "info" luu y), table, column, message, value, threshold, source_key.
+source_key: code|bang|cot|lien_quan, on dinh giua cac lan profiling (khong chua so dem), duy nhat trong mot bao cao:
+lien_quan la dau kia cua quan he, vi hai bang con noi cung mot cot cha cho hai co cung code, bang, cot.
 message KHONG chua gia tri that cua du lieu (chi ten bang/cot, so dem, ty le, ten cau truc dang AAAA999999)
 vi cac co ve sau duoc dua vao ban tom tat gui AI.
 """
@@ -28,9 +30,10 @@ def resolve_thresholds(thresholds=None):
     return {k: thresholds.get(k, getattr(config, k)) for k in THRESHOLD_KEYS}
 
 
-def _flag(code, severity, table, column, message, value=None, threshold=None):
+def _flag(code, severity, table, column, message, value=None, threshold=None, related=None):
     return {"code": code, "severity": severity, "table": table, "column": column,
-            "message": message, "value": value, "threshold": threshold}
+            "message": message, "value": value, "threshold": threshold,
+            "source_key": "|".join(p or "" for p in (code, table, column, related))}
 
 
 def _pct(x):
@@ -173,30 +176,31 @@ def _relationship_flags(report):
             ov = c["result"]["overlap"]
             out.append(_flag("relationship_rejected", INFO, child, ccol,
                              f"{link}: tên cột trùng nhưng giá trị không giao nhau (overlap {_pct(ov)}), bỏ qua",
-                             ov, c["result"]["min_overlap"]))
+                             ov, c["result"]["min_overlap"], related=f"{parent}.{pcol}"))
             continue
         d = c["result"]["details"]
         if "right_duplicate_keys" in d["flags"]:
             out.append(_flag("join_right_duplicate_keys", FLAG, parent, pcol,
                              f"{parent}.{pcol}: {d['right_duplicate_keys']} khóa trùng, ghép từ {child}.{ccol} "
-                             f"tăng {d['extra_rows']} dòng", d["right_duplicate_keys"], 0))
+                             f"tăng {d['extra_rows']} dòng", d["right_duplicate_keys"], 0, related=f"{child}.{ccol}"))
         if "unmatched" in d["flags"]:
             out.append(_flag("join_unmatched", FLAG, child, ccol,
                              f"{link}: {d['left_unmatched_raw']} dòng không khớp ({_pct(d['unmatched_ratio'])}), "
                              f"{d['recoverable']} dòng khớp được nếu chuẩn hóa khóa",
-                             d["unmatched_ratio"], d["unmatched_threshold"]))
+                             d["unmatched_ratio"], d["unmatched_threshold"], related=f"{parent}.{pcol}"))
         if d["key_type_mismatch"]:
             types = ", ".join(f"{t['left']}/{t['right']}" for t in d["key_types"])
-            out.append(_flag("join_key_type_mismatch", FLAG, child, ccol, f"{link}: khác nhóm kiểu khóa ({types})"))
+            out.append(_flag("join_key_type_mismatch", FLAG, child, ccol, f"{link}: khác nhóm kiểu khóa ({types})",
+                             related=f"{parent}.{pcol}"))
         if d["right_unmatched"]:
             out.append(_flag("join_right_unmatched", INFO, parent, pcol,
                              f"{parent}.{pcol}: {d['right_unmatched']} dòng không có trong {child}.{ccol}",
-                             d["right_unmatched"]))
+                             d["right_unmatched"], related=f"{child}.{ccol}"))
     for n in report.get("relationship_notes") or []:
         if n["code"] == "ambiguous_direction":
             out.append(_flag("relationship_ambiguous_direction", INFO, n["table"], n["column"],
                              f"{n['table']}.{n['column']} và {n['other_table']}.{n['other_column']}: cùng là khóa "
-                             f"ở hai bảng, không rõ hướng quan hệ"))
+                             f"ở hai bảng, không rõ hướng quan hệ", related=f"{n['other_table']}.{n['other_column']}"))
         elif n["code"] == "fk_without_reference":
             out.append(_flag("fk_without_reference", INFO, n["table"], n["column"],
                              f"{n['table']}.{n['column']}: dictionary ghi FK nhưng không ghép được bảng nào"))
@@ -223,6 +227,12 @@ def build_flags(report, thresholds=None):
             flags.append(_flag("not_in_dictionary", FLAG, name, None, f"{name}: file không có trong dictionary"))
         flags += _dictionary_flags(name, t)
     return flags + _relationship_flags(report)
+
+
+def all_flags(report):
+    """Moi co cua bao cao: cap bai roi theo bang."""
+    return list(report.get("quality_flags") or []) + [f for t in report["tables"].values()
+                                                      for f in t.get("quality_flags") or []]
 
 
 def summarize_flags(flags, table_names):

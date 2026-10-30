@@ -127,7 +127,7 @@ def test_reject_plan_then_rerun_keeps_plan_and_no_duplicate_decision(env):
     assert code == loop.STOPPED and len(fake.calls) == 2
     state = env.get_state()
     assert state.phase == Phase.PLAN and state.plan["understanding"] == PLAN["understanding"]  # ghi truoc khi hoi
-    assert env.decisions() == []
+    assert [d.text for d in env.decisions()] == ["Tổng giá = cộng cột price"]
 
     code, fake = run([], yes=False, ask_user=say_no_to("kế hoạch"))  # tu choi lan nua: van khong goi AI
     assert code == loop.STOPPED and fake.calls == [] and len(env.open_items()) == 1
@@ -238,7 +238,7 @@ def answers(*items):
 def test_understand_correction_then_confirm(env):
     second = {**RESTATEMENT, "restatement": "DIENGIAI2"}
     code, fake = run([RESTATEMENT, second, PLAN, STEP1, STEP2], yes=False,
-                     ask_user=answers("n", "Chỉ tính hàng thật", "y", "y", "y"))  # de, ke hoach, ket luan
+                     ask_user=answers("n", "Chỉ tính hàng thật", "y", "y", "y", "y"))  # de, D1, cau hoi, ket luan
     assert code == loop.DONE
     retry = prompts(fake)[1]
     assert "- Chỉ tính hàng thật" in retry and "DIENGIAI: đếm" in retry

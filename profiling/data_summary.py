@@ -172,6 +172,11 @@ def _flag_line(f, join_sources=None, derived=None):
     return text + (f": {', '.join(extras)}" if extras else "")
 
 
+def _flag_key(f):
+    """Khoa de AI tro dung co khi de xuat cach xu ly; chi co muc flag moi can quyet dinh."""
+    return f" [key: {f['source_key']}]" if f["severity"] == "flag" and f.get("source_key") else ""
+
+
 def _definitions(report, t):
     """{cot du lieu: dinh nghia trong dictionary}."""
     check = t.get("dictionary_check")
@@ -366,7 +371,8 @@ def _render(report, masked, opts):
         if items and not (opts["minimal"] and sev == "info"):
             join_sources = _join_flag_sources(report)
             derived = _derived_missing(report)
-            lines += ["", f"## {title} ({len(items)})"] + [_flag_line(f, join_sources, derived) for f in items]
+            lines += ["", f"## {title} ({len(items)})"] + [_flag_line(f, join_sources, derived) + _flag_key(f)
+                                                           for f in items]
     return "\n".join(lines) + "\n"
 
 

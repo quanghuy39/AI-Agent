@@ -15,6 +15,11 @@ def ask_model(messages, role, json_schema=None, task_id=None, use_cache=True):
     return backend.ask_model(messages, role, json_schema=json_schema, task_id=task_id, use_cache=use_cache)
 
 
+def set_task_model(task_id, model_key):
+    backend = _backend if _backend is not None else client
+    backend.set_task_model(task_id, model_key)
+
+
 def ask_one_model(messages, role, model_key, json_schema=None, use_cache=False, task_id=None):
     backend = _backend if _backend is not None else client
     return backend.ask_one_model(
@@ -37,6 +42,7 @@ def use_fake(fake):
 __all__ = [
     "ask_model",
     "ask_one_model",
+    "set_task_model",
     "use_fake",
     "set_usage_log_path",
     "anonymize",
