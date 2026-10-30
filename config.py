@@ -100,6 +100,7 @@ RUNNER_META_MAX_BYTES = 200_000      # file meta (AGENT_META_PATH) lon hon thi b
 # (ham sync lam o muc 5 phai bo qua no).
 FAKE_OUTPUT_SUBDIR = "_fake"
 CAUTION_DEFAULT = "chuan"            # muc than trong duy nhat dang ho tro
+SYNC_MANIFEST_DIR = "sync_manifest"  # trong cache/: manifest dong bo ho so len R2, moi bai mot file
 ANALYSIS_MAX_RETRIES = 3             # so lan goi lai AI cho moi cau hoi sau lan dau
 ANALYSIS_UNDERSTAND_MAX_RETRIES = 3  # so lan goi lai AI dien giai de sau lan dau, khi nguoi dung gop y
 ANALYSIS_FEEDBACK_STDERR_CHARS = 1500  # error_feedback chi giu chung nay ky tu cuoi cua stderr

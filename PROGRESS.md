@@ -11,7 +11,7 @@ Cập nhật: 30/10/2026. Nguồn: git log, code trong repo, tóm tắt cuối n
 | 3 | Xong | `ledger/` (hồ sơ bài ở `output/<bài>/`), usage log nối vào `run_log.jsonl`, Dockerfile build và chạy được. 238 test pass. |
 | 4 | Xong | `profiling/` (quality, dictionary, flags, relationships, data_summary), `validators/`, khoảng hợp lệ trong dictionary; `tests.grade_bai0b` đạt 5/5 lỗi cài sẵn. 476 test pass. |
 | 5 | Xong | Runner, skill phân tích, meta_grader, `analysis.loop`, fit_prompt, bộ kiểm định theo skill thật; chốt chuỗi analysis. Bài 0a ĐẠT toàn bộ; bài 1 chạy trọn 4 câu, số liệu đúng, phán đoán BI chưa đạt. 645 test pass. |
-| 6 | Đang làm | Mục 1, 2, 3, 4 xong (chưa commit): điều phối theo pha, chạy tiếp được, `--fake` tách hồ sơ, điểm dừng xác nhận, decision chờ xác nhận, cờ chất lượng thành decision, `context_builder`. 783 test pass. Còn lại theo ghi chú: mục 5 (đồng bộ hồ sơ lên R2); thêm các bài học ở mục "Bài học chung cho Ngày 6". Phạm vi đầy đủ: chưa xác nhận. |
+| 6 | Đang làm | Mục 1 đến 5 xong (chưa commit): điều phối theo pha, chạy tiếp được, `--fake` tách hồ sơ, điểm dừng xác nhận, decision chờ xác nhận, cờ chất lượng thành decision, `context_builder`, đồng bộ hồ sơ lên R2. 842 test pass. Còn lại theo ghi chú: thêm các bài học ở mục "Bài học chung cho Ngày 6". Phạm vi đầy đủ: chưa xác nhận. |
 | 7 | Chưa | Chưa xác nhận (thư mục `report/`, `slides/` mới có `__init__.py`). |
 | 8 | Chưa | Chưa xác nhận (ghi chú: `LLM_CONFIG_PATH` kiểu Windows không dùng được trong container). |
 
@@ -161,6 +161,20 @@ Mục 4, `context_builder` (chưa commit, kiểm bằng FakeLLM và R2 giả; ch
   | step, chưa có kết quả | ~4.128 | ~4.560 |
   | step, đủ hồ sơ hiện có | ~4.753 | ~4.568 (bai2 chưa có kết quả) |
 
+Mục 5, đồng bộ hồ sơ lên R2 (chưa commit, kiểm bằng R2 giả và `--dry-run` trên `bai0a`, `bai1`; chưa tải thật lần nào):
+- `storage/sync.py`: tải toàn bộ `output/<bài>/` (kể cả `work/_superseded/`, trừ file tạm của Ledger) lên
+  `R2_OUTPUT_PREFIX + <bài>/` qua `r2.upload_file`, hàm này dùng đúng token `R2_WRITE_*`. Không xóa gì trên R2.
+- Từ chối bằng code, kể cả gọi tay: `_fake` (tên bài hoặc đang ở `fake_output`), tên bài sai, prefix cấu hình sai (rỗng,
+  thiếu `/`, trùng `input/`, `answers/`), mọi khóa ngoài prefix hoặc có `answers`.
+- Manifest `cache/sync_manifest/<bài>.json` (đường dẫn → sha256), cập nhật sau từng file tải thành công. Manifest hỏng thì
+  coi như rỗng.
+- Gọi ở: trước mỗi câu hỏi xác nhận (`_with_sync` bọc `ask_user`, bỏ qua câu gõ tiếp), khi xong, khi thoát mọi đường kể cả
+  KeyboardInterrupt (giờ bắt được, mã 3) và lỗi ngoài dự kiến. `--fake`, `--no-sync` không gọi. `run_task` gọi trực tiếp
+  mặc định tắt, `run_cli` mới bật, để test không có nguy cơ gọi R2.
+- Lỗi đồng bộ: một dòng cảnh báo, sự kiện `sync` trong run_log (uploaded, skipped, failed, not_attempted, errors chỉ gồm
+  tên lỗi). Lỗi một file thì tải tiếp file khác; mất kết nối thì dừng lượt đó để không chờ timeout từng file.
+- `python -m storage.sync <bài> [--dry-run]`: mã 0 xong, 1 có file lỗi, 2 bị từ chối.
+
 ## Bài học chung cho Ngày 6
 Không viết riêng cho bài 1; đo trên bài 2.
 - So sánh giữa các nhóm phải nêu độ lớn khác biệt và mức chắc chắn.
@@ -210,7 +224,12 @@ Không viết riêng cho bài 1; đo trên bài 2.
   dùng `python main.py bai0a --restart`.
 - Bài đã `done` thì chạy lại chỉ báo xong, không đối chiếu `--sensitive`.
 - Hạn mức: Gemini 3.8 Flash 20 lượt/ngày, OpenRouter 50 lượt/ngày (`config/llm.yaml`).
-- Chưa `docker build` lại sau khi thêm `COPY analysis/`.
+- Chưa `docker build` lại sau khi thêm `COPY analysis/` và `context_builder.py`.
+- Đồng bộ R2: sự kiện `sync` tự làm đổi `run_log.jsonl`, nên mỗi lượt sau luôn tải lại file này, và dòng log của lượt cuối
+  chỉ lên R2 ở lần chạy sau. Với `--yes` không có câu hỏi nên chỉ đồng bộ khi kết thúc.
+- Đồng bộ R2 không xóa nên sau `--restart` khóa `work/` cũ vẫn còn trên R2 cho tới khi bị ghi đè. Manifest chỉ ở máy này:
+  máy khác hoặc container mới sẽ tải lại toàn bộ; object bị xóa tay trên R2 không được tải lại cho tới khi file đổi.
+- `output/<bài>/data_profile.json` có bản ghi mẫu thô, kể cả cột che; đồng bộ đưa file này lên `output/` của bucket.
 - `requirements.txt` hiện không có scipy (tóm tắt Ngày 1 có nhắc scipy): chưa xác nhận có cần không.
 - Dictionary bài 1, 2 nhắc bảng EXTERNAL_FACTOR, PRICE_CHANGE không có trong dữ liệu.
 - Kiểm định report/slide (dùng `--resume`), rồi đánh `validated: true` cho model qua ngưỡng.

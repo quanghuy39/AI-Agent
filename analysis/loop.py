@@ -1,7 +1,7 @@
 """Cac pha phan tich: hieu de, tong quan du lieu, lap ke hoach, tung cau hoi (AI viet code, runner chay, cham meta,
 ghi so), tong hop. Thu tu pha, luu tien do va ma thoat nam o main.py (run_task); module nay khong co luong rieng.
 
-Chay: python -m analysis.loop <task> [--sensitive BANG.cot ...] [--use-fake] [--max-retries 3] [--yes]
+Chay: python -m analysis.loop <task> [--sensitive BANG.cot ...] [--use-fake] [--max-retries 3] [--yes] [--no-sync]
 --yes tu tra loi "y" (chi dung khi test). --use-fake dung FakeLLM voi kich ban demo (khong goi AI that).
 
 Ma thoat: 0 xong; 1 loi cau hinh/yeu cau AI hoac loi R2; 2 het han muc chuoi model (chay lai de tiep tuc); 3 dung
@@ -45,6 +45,9 @@ KEEP_DATA_KEY = "keep_data|info_flags"
 KEEP_DATA_QUESTION = "Chấp nhận giữ nguyên dữ liệu với các lưu ý trên?"
 KEEP_DATA_TEXT = "Giữ nguyên dữ liệu, không xử lý riêng các lưu ý về chất lượng dữ liệu"
 ACCEPT_FLAGS_KEY = "accept_flags|"  # decision "chap nhan R.. du co co", sinh sau khi giai, khong thuoc diem dung nay
+EDIT_PROMPT = "  Nội dung mới: "
+CORRECTION_PROMPT = "Gõ chỉnh sửa (để trống để dừng): "
+FOLLOW_UP_PROMPTS = (EDIT_PROMPT, CORRECTION_PROMPT)  # go tiep sau mot cau tra loi, khong phai diem dung moi
 
 
 class StopLoop(Exception):
@@ -253,7 +256,7 @@ def _review_each(ctx, kind, title, yes, ask_user, open_item):
                 break
             if answer == "n":
                 _stop_pending(ctx, open_item)
-            text = ask_user("  Nội dung mới: ").strip() if answer == "s" else None
+            text = ask_user(EDIT_PROMPT).strip() if answer == "s" else None
             if text:
                 break
         _confirm_decision(ctx, d, text)
@@ -273,7 +276,7 @@ def _review_list(ctx, title, yes, ask_user, open_item):
         elif answer == "n":
             _stop_pending(ctx, open_item)
         elif answer.isdigit() and 1 <= int(answer) <= len(items):
-            text = ask_user("  Nội dung mới: ").strip()
+            text = ask_user(EDIT_PROMPT).strip()
             if text:
                 _confirm_decision(ctx, items[int(answer) - 1], text)
         items = _pending(ctx, "assumption")
@@ -365,7 +368,7 @@ def understand(ctx, yes, ask_user):
             return
         if attempt == config.ANALYSIS_UNDERSTAND_MAX_RETRIES:
             break
-        text = ask_user("Gõ chỉnh sửa (để trống để dừng): ").strip()
+        text = ask_user(CORRECTION_PROMPT).strip()
         if not text:
             break
         corrections.append(text)
@@ -733,10 +736,11 @@ def main(argv=None):
     p.add_argument("--use-fake", action="store_true", help="dùng FakeLLM kịch bản demo (không gọi AI thật)")
     p.add_argument("--max-retries", type=int, default=config.ANALYSIS_MAX_RETRIES)
     p.add_argument("--yes", action="store_true", help="tự trả lời y (chỉ dùng khi test)")
+    p.add_argument("--no-sync", action="store_true", help="không đồng bộ hồ sơ lên R2")
     args = p.parse_args(argv)
     import main as app  # lazy: main.py import module nay
-    return app.run_cli(args.task, fake=args.use_fake, sensitive=args.sensitive, max_retries=args.max_retries,
-                       yes=args.yes)
+    return app.run_cli(args.task, fake=args.use_fake, sync=not args.no_sync, sensitive=args.sensitive,
+                       max_retries=args.max_retries, yes=args.yes)
 
 
 if __name__ == "__main__":

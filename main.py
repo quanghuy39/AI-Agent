@@ -1,11 +1,13 @@
 """Diem vao: dieu phoi mot bai theo pha understand -> explore -> plan -> loop -> synthesize -> done.
 
-Chay: python main.py <bai> [--sensitive BANG.cot ...] [--restart] [--yes] [--fake]
+Chay: python main.py <bai> [--sensitive BANG.cot ...] [--restart] [--yes] [--fake] [--no-sync]
 --sensitive: cot che, chot vao state o lan chay dau; chay tiep dung danh sach trong state, truyen khac thi dung.
 --restart: ket qua valid cu thanh superseded, file work/ sang work/_superseded/<thoi diem>/, ve pha understand
 (decisions, run_log giu nguyen; khong truyen --sensitive thi giu danh sach cot che cu).
 --yes tu tra loi "y" (chi dung khi test). --fake dung FakeLLM voi kich ban demo (khong goi AI that), ho so ghi vao
-output/_fake/<bai>/ nen khong dung toi ho so that.
+output/_fake/<bai>/ nen khong dung toi ho so that, va khong dong bo len R2.
+--no-sync: khong dong bo ho so len R2. Mac dinh dong bo truoc moi cau hoi xac nhan, khi xong va khi thoat vi loi;
+dong bo loi chi canh bao, khong dung agent (storage/sync.py).
 
 Sau moi pha ghi state.json (phase = pha dang do). Chay lai thi tiep tu pha do: ke hoach da co trong state khong goi
 lai AI, phase da qua plan nghia la ke hoach da duoc chap nhan, cau da co trong results_by_question() khong giai lai.
@@ -28,6 +30,7 @@ from profiling import quality
 from profiling.data_summary import SensitiveLeakError
 from runner import run_code as runner
 from skills.analysis.schemas import AnalysisPlan
+from storage import sync as r2_sync
 
 LEAK_OPEN_ITEM = "Bản tóm tắt dữ liệu lộ giá trị cột bị che; cần xem lại khai báo cột nhạy cảm."
 
@@ -154,30 +157,51 @@ def _open_context(led, task, state, sensitive):
     return ctx
 
 
-def run_task(task, sensitive=None, max_retries=None, yes=False, ask_user=input, restart=False):
-    """Chay mot bai tu pha dang do; tra ve ma thoat."""
+def _with_sync(ask_user, led, task):
+    """Bo ask_user: dong bo truoc moi cau hoi xac nhan (cau go tiep khong phai diem dung moi)."""
+    def ask(question):
+        if question not in loop.FOLLOW_UP_PROMPTS:
+            r2_sync.safe_sync(led, task, "checkpoint")
+        return ask_user(question)
+    return ask
+
+
+def run_task(task, sensitive=None, max_retries=None, yes=False, ask_user=input, restart=False, sync=False):
+    """Chay mot bai tu pha dang do; tra ve ma thoat. sync: dong bo ho so len R2 (CLI bat, goi truc tiep thi tat)."""
     max_retries = config.ANALYSIS_MAX_RETRIES if max_retries is None else max_retries
     led = Ledger(runner.OUTPUT_DIR / task)
     led.attach_usage_log()  # moi luot goi AI ghi vao run_log.jsonl
-    ctx = None
+    ctx = code = None
     _warn_options(yes)
+    if sync:
+        ask_user = _with_sync(ask_user, led, task)
     try:
         if restart:
             _restart(led, sensitive)
         state = _load_state(led)
         if state.phase == Phase.DONE:
             print(f"Bài {task} đã xong. Dùng --restart để làm lại.")
-            return loop.DONE
+            code = loop.DONE
+            return code
         llm.set_task_model(task, state.model)  # so doi model voi lan chay truoc, ke ca khac tien trinh
         ctx = _open_context(led, task, state, sensitive)
         while state.phase != Phase.DONE:
             next_phase = _run_phase(ctx, state, max_retries, yes, ask_user)
             state = led.update_state(phase=next_phase)
         led.log_event("analysis", "done", extra={"results": list(led.results_by_question().values())})
-        return loop.DONE
+        code = loop.DONE
+        return code
     except (loop.StopLoop, LLMError, SensitiveLeakError, ClientError, BotoCoreError) as e:
-        return exit_code_for(e, led, ctx)
+        code = exit_code_for(e, led, ctx)
+        return code
+    except KeyboardInterrupt:
+        led.log_event("analysis", "stop", status="interrupted")
+        print("\nDừng do người dùng ngắt. Chạy lại để tiếp tục.")
+        code = loop.STOPPED
+        return code
     finally:
+        if sync:  # ca loi ngoai du kien (code van None): ho so toi diem nay van len R2
+            r2_sync.safe_sync(led, task, "done" if code == loop.DONE else "exit")
         led.detach_usage_log()
 
 
@@ -193,12 +217,12 @@ def fake_output():
         runner.OUTPUT_DIR, quality.OUTPUT_DIR = saved
 
 
-def run_cli(task, fake=False, **kwargs):
+def run_cli(task, fake=False, sync=True, **kwargs):
     if fake:
         print(f"Chế độ giả lập, hồ sơ ở output/{config.FAKE_OUTPUT_SUBDIR}/{task}")
         with fake_output(), llm.use_fake(loop.demo_fake()):
-            return run_task(task, **kwargs)
-    return run_task(task, **kwargs)
+            return run_task(task, sync=False, **kwargs)
+    return run_task(task, sync=sync, **kwargs)
 
 
 def main(argv=None):
@@ -209,12 +233,14 @@ def main(argv=None):
     p.add_argument("--restart", action="store_true", help="làm lại từ đầu: kết quả cũ thành superseded")
     p.add_argument("--yes", action="store_true", help="tự trả lời y (chỉ dùng khi test)")
     p.add_argument("--fake", action="store_true", help="dùng FakeLLM kịch bản demo (không gọi AI thật)")
+    p.add_argument("--no-sync", action="store_true", help="không đồng bộ hồ sơ lên R2")
     args = p.parse_args(argv)
     try:
         quality._check_problem_id(args.task)
     except ValueError as e:
         p.error(str(e))
-    return run_cli(args.task, fake=args.fake, sensitive=args.sensitive, restart=args.restart, yes=args.yes)
+    return run_cli(args.task, fake=args.fake, sync=not args.no_sync, sensitive=args.sensitive, restart=args.restart,
+                   yes=args.yes)
 
 
 if __name__ == "__main__":

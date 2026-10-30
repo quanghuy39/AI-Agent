@@ -13,6 +13,8 @@ Trạng thái từng ngày: xem `PROGRESS.md`.
 - `llm/` – lớp gọi AI: `client.py` (ask_model, ask_one_model; nơi duy nhất import litellm), `cache.py`, `usage.py`,
   `structured.py` (JSON + pydantic), `anonymize.py`, `fake.py` (FakeLLM), `errors.py`.
 - `storage/r2.py` – list/đọc/ghi R2, `download_with_cache` (so etag), `read_table` (csv/parquet), chặn `answers/`.
+- `storage/sync.py` – đồng bộ `output/<bài>/` lên R2 (`sync_task`, `safe_sync`): chỉ tải lên, không xóa; manifest hash ở
+  `cache/sync_manifest/`; từ chối `output/_fake/`, `input/`, `answers/` và mọi khóa ngoài `R2_OUTPUT_PREFIX`.
 - `profiling/` – `quality.py` (profile_problem, data_quality_report), `dictionary.py`, `flags.py`,
   `relationships.py`, `data_summary.py` (bản tóm tắt đã che cho AI).
 - `validators/` – `rows.py`, `join.py`, `sums.py`, `ranges.py`, `result.py` (row_count/join/sum/range check).
@@ -44,8 +46,9 @@ python -m storage.r2 head input/bai0a/CATEGORY.csv
 python -m profiling.quality bai0b [--no-samples] [--set TEN=GIATRI] [--range BANG.COT=MIN:MAX]
 python -m profiling.data_summary bai1 [--sensitive BANG.cot] [--max-chars N] [--no-samples] [--refresh]
 python -m runner.run_code bai1 path\to\code.py [--step TEN] [--timeout GIAY]
-python main.py bai1 [--sensitive BANG.cot] [--restart] [--yes] [--fake]   # chạy một bài, tiếp từ pha đang dở
-python -m analysis.loop bai1 [--sensitive BANG.cot] [--use-fake] [--max-retries 3] [--yes]   # cùng luồng main.py
+python main.py bai1 [--sensitive BANG.cot] [--restart] [--yes] [--fake] [--no-sync]   # chạy một bài, tiếp từ pha đang dở
+python -m analysis.loop bai1 [--sensitive BANG.cot] [--use-fake] [--max-retries 3] [--yes] [--no-sync]   # cùng luồng main.py
+python -m storage.sync bai1 [--dry-run]               # đồng bộ hồ sơ lên R2; --dry-run chỉ in số file, không ghi gì
 python -m tests.grade_bai0b                           # chấm profiling bài 0b bằng answers/ (quyền grader)
 python -m tests.grade_bai0a                           # chấm kết quả bài 0a (quyền grader, đáp án qua grader_download, không ghi cache)
 python -m tests.grade_bai1                            # chấm bài 1 (như trên); đối chiếu theo từ khóa, LỆCH/CẦN NGƯỜI XEM cần người xem lại
@@ -58,6 +61,8 @@ lộ giá trị che).
 Chạy lại: tiếp từ pha trong `state.json`; câu đã giải lấy từ `Ledger.results_by_question()` (chỉ kết quả valid).
 `--sensitive` chốt vào state ở lần chạy đầu, muốn đổi thì `--restart --sensitive ...`. `--restart` chuyển kết quả valid
 thành superseded và toàn bộ file `work/` sang `work/_superseded/<thời điểm>/`; decisions và run_log giữ nguyên.
+Đồng bộ R2 (trừ `--fake`, `--no-sync`): trước mỗi câu hỏi xác nhận, khi xong và khi thoát vì lỗi; lỗi đồng bộ chỉ cảnh
+báo một dòng, ghi sự kiện `sync` trong run_log, lần sau tải lại nhờ manifest. `run_task` gọi trực tiếp thì mặc định tắt.
 Lọc output tiếng Việt bằng `Select-String` cần `[Console]::OutputEncoding = [Text.Encoding]::UTF8`.
 
 ## Quy tắc bất biến
@@ -79,6 +84,7 @@ Lọc output tiếng Việt bằng `Select-String` cần `[Console]::OutputEncod
 - Lỗi lặp lại ở nhiều bài: thêm quy tắc/phép kiểm vào phần cố định (contract, validators, meta_grader)
   thay vì nhắc AI thêm trong prompt. Prompt giữ chung, không gợi ý bẫy của từng bài.
 - Test không gọi R2 hay LLM thật: dùng FakeLLM (`use_fake`) và monkeypatch storage.
+  Không bật `sync=True` hay gọi `run_cli` không `--fake` trong test khi chưa thay `sync.sync_task` hoặc `r2._write_client`.
 - Trả lời người dùng bằng tiếng Việt; tên kỹ thuật giữ nguyên.
 
 ## Chỉ đường
