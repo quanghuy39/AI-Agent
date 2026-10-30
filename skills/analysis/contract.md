@@ -32,11 +32,12 @@ Write one JSON object to os.environ["AGENT_META_PATH"] with:
 
 Required checks
 - Each item of can_be_wrong_if has at least one matching custom check.
+- Write at least as many custom checks as items in can_be_wrong_if; each custom check name must restate the item it tests.
 - Each filter or join has a row_count check; give expected_ratio when the step should drop many rows.
 - Each join of two tables has a join check.
 - Each group-by aggregation has a sum check when the overall total can be computed.
 
-Example (end of script):
+Example (end of script), for can_be_wrong_if = ["negative values exist", "some dates fail to parse"]:
 ```python
 import json, os
 meta = {
@@ -45,7 +46,10 @@ meta = {
         {"type": "row_count", "label": "filter", "before": int(n_before), "after": int(n_after),
          "expect": "not_more", "expected_ratio": None},
         {"type": "sum", "label": "group totals", "parts": [float(x) for x in by_group], "total": float(total)},
-        {"type": "custom", "name": "no negative values", "passed": bool((values >= 0).all()), "reason": "..."},
+        {"type": "custom", "name": "negative values exist", "passed": bool((values >= 0).all()),
+         "reason": f"{int((values < 0).sum())} negative values"},
+        {"type": "custom", "name": "some dates fail to parse", "passed": bool(dates.notna().all()),
+         "reason": f"{int(dates.isna().sum())} unparsed dates"},
     ],
 }
 with open(os.environ["AGENT_META_PATH"], "w", encoding="utf-8") as f:

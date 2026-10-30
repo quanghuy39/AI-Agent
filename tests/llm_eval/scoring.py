@@ -444,9 +444,35 @@ def _fail_all(names, reason):
     return {n: False for n in names}, {n: reason for n in names}
 
 
-def score_analysis(case, out, data_dir, timeout_s=30):
+LABEL_MAX_CHARS = 100
+
+
+def meta_details(out, run):
+    """Thong tin de soat loi meta, khong chua gia tri du lieu: loai + label/name cua tung check (khong passed,
+    reason, so lieu), so y can_be_wrong_if, so check custom, structural_errors cua grade_meta (von chi gom so dem,
+    ten cot, ten file). meta_check_types / n_custom_checks = None khi khong co meta."""
+    checks = (run.meta or {}).get("checks") if run else None
+    types = None
+    if isinstance(checks, list):
+        types = []
+        for c in checks:
+            c = c if isinstance(c, dict) else {}
+            name_key = "name" if c.get("type") == "custom" else "label"
+            types.append({"type": c.get("type"), name_key: str(c.get(name_key, ""))[:LABEL_MAX_CHARS]})
+    return {
+        "meta_check_types": types,
+        "n_can_be_wrong_if": len([x for x in out.can_be_wrong_if if x.strip()]) if out is not None else None,
+        "n_custom_checks": sum(1 for t in types if t["type"] == "custom") if types is not None else None,
+        "structural_errors": list(run.grade.structural_errors) if run and run.grade else [],
+    }
+
+
+def score_analysis(case, out, data_dir, timeout_s=30, details=None):
     """out: AnalysisStep (hoac None khi JSON sai). Tieu chi rieng meta_valid: meta co, doc duoc va grade_meta
-    khong co structural_errors. value_correct so dap an (lam phang) voi result_summary trong meta."""
+    khong co structural_errors. value_correct so dap an (lam phang) voi result_summary trong meta.
+    details (dict, tuy chon): duoc dien meta_details(out, run) de ghi vao dong ket qua."""
+    if details is not None:
+        details.update(meta_details(out, None))
     kind = case.checks["kind"]
     names = ["code_runs", "meta_valid", "no_invented_columns", "no_forbidden"]
     names += {"value": ["value_correct"], "missing_column": ["handles_missing_column"],
@@ -459,6 +485,8 @@ def score_analysis(case, out, data_dir, timeout_s=30):
     code = (out.code or "").strip()
     rep = static_check(code) if code else StaticReport()
     run = run_step(code, data_dir, out, timeout_s) if code and not rep.parse_error else None
+    if details is not None:
+        details.update(meta_details(out, run))
 
     # code_runs, meta_valid
     if kind == "missing_column" and not code:
@@ -601,10 +629,11 @@ def score_slide(case, out):
     return crit, why
 
 
-def score_case(case, out, data_dir=None, timeout_s=30):
-    """Cham mot case. out: doi tuong pydantic da validate hoac None (JSON sai). Tra ve (criteria, reasons)."""
+def score_case(case, out, data_dir=None, timeout_s=30, details=None):
+    """Cham mot case. out: doi tuong pydantic da validate hoac None (JSON sai). Tra ve (criteria, reasons).
+    details: chi role analysis dien (xem meta_details)."""
     if case.role == "analysis":
-        return score_analysis(case, out, data_dir, timeout_s)
+        return score_analysis(case, out, data_dir, timeout_s, details)
     if case.role == "report":
         return score_report(case, out)
     if case.role == "slide":

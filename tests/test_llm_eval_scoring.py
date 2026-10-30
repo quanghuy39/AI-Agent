@@ -205,6 +205,25 @@ def test_b_meta_valid_is_separate_criterion(data_dir):
     assert "không có file meta" in why["meta_valid"]
 
 
+def test_b_meta_details_structure_only(data_dir):
+    case = CASES["A01_groupby_sum"]
+    step = reference(case).model_copy(update={"can_be_wrong_if": ["a", "b", "c"]})
+    details = {}
+    crit, _ = score_case(case, step, data_dir, details=details)
+    assert crit["meta_valid"] is False
+    assert details["meta_check_types"] == [{"type": "sum", "label": "tổng theo channel"},
+                                           {"type": "custom", "name": "amount không âm"}]
+    assert (details["n_can_be_wrong_if"], details["n_custom_checks"]) == (3, 1)
+    assert len(details["structural_errors"]) == 1 and "3 ý" in details["structural_errors"][0]
+    dumped = json.dumps(details, ensure_ascii=False)
+    assert "14409" not in dumped and "passed" not in dumped and "reason" not in dumped  # khong so lieu, khong reason
+
+    details = {}
+    score_case(CASES["A09_missing_column"], analysis("", reason="không có cột", risks=()), data_dir, details=details)
+    assert details == {"meta_check_types": None, "n_can_be_wrong_if": 0, "n_custom_checks": None,
+                       "structural_errors": []}
+
+
 def test_b_value_from_result_summary(data_dir):
     case = CASES["A02_distinct"]
     code = READ + 'result = {"n_customers": 120}' + META  # so sai trong meta
@@ -429,7 +448,10 @@ def test_c_run_eval_full_resume_and_stop(tmp_path, capsys):
     assert [r["case_id"] for r in lines] == ["A01_groupby_sum", "A02_distinct"]
     assert all(r["passed"] and r["criteria"]["value_correct"] for r in lines)
     assert {"case_id", "criteria", "reasons", "prompt_tokens", "completion_tokens", "network_calls",
-            "latency_s", "answer_head"} <= set(lines[0])
+            "latency_s", "answer_head", "meta_check_types", "n_can_be_wrong_if", "n_custom_checks",
+            "structural_errors"} <= set(lines[0])
+    assert lines[0]["n_custom_checks"] == lines[0]["n_can_be_wrong_if"] == 1 and lines[0]["structural_errors"] == []
+    assert "code" not in lines[0]
     assert sleeps == [pytest.approx(60 / 30 * 1.2)]  # rpm=30 trong llm.yaml
     assert [c["model_key"] for c in fake.calls] == [MODEL, MODEL]
 

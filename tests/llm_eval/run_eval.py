@@ -90,7 +90,8 @@ def run_case(case, model, data_dir, code_timeout):
         usage = dict(getattr(e, "llm_usage", None) or {})
         latency = round(time.perf_counter() - t0, 3)
 
-    criteria, reasons = score_case(case, out, data_dir, code_timeout)
+    details = {}  # analysis: cau truc meta (khong gia tri du lieu, khong code day du)
+    criteria, reasons = score_case(case, out, data_dir, code_timeout, details)
     return {
         "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
         "model_key": model,
@@ -106,6 +107,7 @@ def run_case(case, model, data_dir, code_timeout):
         "json_retries": usage.get("json_retries"),
         "latency_s": latency,
         "answer_head": (text or "")[:ANSWER_HEAD],
+        **details,
     }
 
 
