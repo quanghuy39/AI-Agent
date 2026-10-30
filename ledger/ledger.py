@@ -7,8 +7,10 @@ Khong khoa file: khong dung cho nhieu tien trinh ghi cung luc.
 
 import json
 import os
+import shutil
 import tempfile
 from collections import deque
+from datetime import datetime
 from pathlib import Path
 
 from ledger.schema import (
@@ -21,6 +23,8 @@ from ledger.schema import (
     OpenItemStatus,
     ResultEntry,
     ResultStatus,
+    RunState,
+    now_iso,
 )
 
 PROBLEM = "problem.json"
@@ -30,6 +34,9 @@ RESULTS = "results.json"
 FINDINGS = "findings.json"
 OPEN_ITEMS = "open_items.json"
 RUN_LOG = "run_log.jsonl"
+STATE = "state.json"
+WORK_DIR = "work"
+SUPERSEDED_DIR = "_superseded"  # trong work/: file cua lan lam truoc, khong dua cho AI
 
 
 def _id_number(item_id):
@@ -92,6 +99,24 @@ class Ledger:
     def set_data_profile(self, profile):
         self._write_json(DATA_PROFILE, profile)
 
+    # ---------- tien do ----------
+
+    def get_state(self):
+        """Tien do da luu; ho so cu chua co state.json thi None."""
+        data = self._read_json(STATE, None)
+        return None if data is None else RunState.model_validate(data)
+
+    def set_state(self, phase, plan=None, sensitive=None):
+        state = RunState(phase=phase, plan=plan, sensitive=sensitive)
+        self._write_json(STATE, state.model_dump(mode="json"))
+        return state
+
+    def update_state(self, **changes):
+        """Doi mot vai truong cua state hien co (phase, plan, sensitive), cap nhat updated_at."""
+        state = RunState(**{**self.get_state().model_dump(), **changes, "updated_at": now_iso()})
+        self._write_json(STATE, state.model_dump(mode="json"))
+        return state
+
     # ---------- doc danh sach ----------
 
     def results(self):
@@ -112,6 +137,11 @@ class Ledger:
                 return r
         raise KeyError(f"không có kết quả {result_id}")
 
+    def results_by_question(self):
+        """{question_key: id} cua ket qua valid. Nguon su that duy nhat cho "cau nao da giai"."""
+        return {r.question_key: r.id for r in self.results()
+                if r.status == ResultStatus.VALID and r.question_key}
+
     def read_log(self):
         path = self._path(RUN_LOG)
         if not path.exists():
@@ -122,7 +152,7 @@ class Ledger:
     # ---------- ket qua ----------
 
     def add_result(self, question, method, result_summary, checks, depends_on=None, output_path=None,
-                   code_file=None, definition_version=1):
+                   code_file=None, definition_version=1, question_key=None):
         if not checks:
             raise ValueError(
                 "Không ghi sổ khi thiếu kiểm chứng: checks rỗng. "
@@ -138,6 +168,7 @@ class Ledger:
         entry = ResultEntry(
             id=_next_id("R", results),
             question=question,
+            question_key=question_key,
             method=method,
             result_summary=result_summary,
             output_path=output_path,
@@ -181,6 +212,39 @@ class Ledger:
         self.log_event("ledger", "mark_stale", inputs={"result_id": result_id}, extra={"stale": affected})
         return affected
 
+    def _archive_work(self):
+        """Chuyen moi file trong work/ (tru _superseded/) vao work/_superseded/<thoi diem>/, khong xoa.
+        Lay het thay vi theo output_path: output_path khong co file ma lan thu hong da ghi cung noi dung.
+        Tra ve {"work/a.csv": duong dan moi}, tuong doi theo goc ho so."""
+        work = self.root / WORK_DIR
+        if not work.is_dir():
+            return {}
+        files = [p for p in sorted(work.rglob("*")) if p.is_file() and SUPERSEDED_DIR not in p.relative_to(work).parts]
+        dest = work / SUPERSEDED_DIR / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        moved = {}
+        for path in files:
+            target = dest / path.relative_to(work)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(path, target)
+            moved[path.relative_to(self.root).as_posix()] = target.relative_to(self.root).as_posix()
+        return moved
+
+    def supersede_valid(self):
+        """Moi ket qua valid thanh superseded va cat file work/ sang _superseded/ (chay lai ca bai).
+        output_path tro toi cho moi. Tra ve cac id da doi, theo thu tu id."""
+        results = self.results()
+        moved = self._archive_work()
+        changed = []
+        for r in results:
+            if r.status == ResultStatus.VALID:
+                r.status = ResultStatus.SUPERSEDED
+                changed.append(r.id)
+                if r.output_path:
+                    r.output_path = "; ".join(moved.get(p, p) for p in r.output_path.split("; "))
+        self._write_models(RESULTS, results)
+        self.log_event("ledger", "supersede_valid", extra={"superseded": changed, "n_files_moved": len(moved)})
+        return changed
+
     # ---------- quyet dinh ----------
 
     def add_decision(self, kind, text, required=True):
@@ -219,6 +283,18 @@ class Ledger:
         o = OpenItem(id=_next_id("O", items), text=text)
         self._write_models(OPEN_ITEMS, items + [o])
         return o
+
+    def add_open_item_once(self, text):
+        """Nhu add_open_item, nhung da co muc dang mo cung noi dung thi tra ve muc do."""
+        for o in self.open_items():
+            if o.status == OpenItemStatus.OPEN and o.text == text:
+                return o
+        return self.add_open_item(text)
+
+    def close_open_items_with_text(self, text):
+        for o in self.open_items():
+            if o.status == OpenItemStatus.OPEN and o.text == text:
+                self.close_open_item(o.id)
 
     def close_open_item(self, item_id):
         items = self.open_items()

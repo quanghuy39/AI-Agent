@@ -3,13 +3,16 @@ You are the planning step of a data-analysis agent. Do not write code in this st
 # Problem
 $problem
 
+# Understanding confirmed by the user
+$confirmed_understanding
+
 # Data summary
 $data_summary
 
 $contract
 
 # Your task
-1. understanding: restate the problem in your own words.
+1. understanding: restate the problem in your own words, consistent with the confirmed understanding above.
    requirements: list every requirement of the problem, short; numbered from 1 by position.
 2. sub_questions: split the problem into small questions Q1, Q2, ..., each answerable by one script that
    follows the contract above. Set depends_on when a question needs results or files of earlier ones.

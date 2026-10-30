@@ -27,3 +27,8 @@ class LLMChainExhausted(LLMError):
         super().__init__(message)
         self.attempts = attempts or []
         self.next_available_at = next_available_at
+
+    @property
+    def json_invalid_only(self):
+        """True: moi model da thu deu tra loi sai JSON/schema, khong phai loi han muc hay ket noi."""
+        return bool(self.attempts) and all(a.get("reason") == "json_invalid" for a in self.attempts)

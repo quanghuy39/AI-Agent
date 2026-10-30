@@ -1,4 +1,5 @@
-"""Schema JSON cho skill phan tich: dau ra cua AI (AnalysisPlan, AnalysisStep) va file meta do CODE ghi (AgentMeta).
+"""Schema JSON cho skill phan tich: dau ra cua AI (ProblemRestatement, AnalysisPlan, AnalysisStep) va file meta do
+CODE ghi (AgentMeta).
 
 Ten truong cua MetaCheck khop tham so cua validators/ (row_count_check, sum_consistency, range_check, join_check)
 de vong lap noi thang. Assumption khop ledger.add_decision(kind, text, required).
@@ -15,6 +16,12 @@ _KEY_RE = re.compile(r"^Q\d+$")
 
 class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class ProblemRestatement(_Model):
+    restatement: str = Field(min_length=1)
+    goals: list[str] = Field(min_length=1)
+    ambiguities: list[str] = Field(default_factory=list)
 
 
 class Assumption(_Model):

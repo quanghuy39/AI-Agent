@@ -96,7 +96,11 @@ RUNNER_MAX_OUTPUT_CHARS = 20_000     # stdout/stderr dai hon thi giu dau + cuoi
 RUNNER_META_MAX_BYTES = 200_000      # file meta (AGENT_META_PATH) lon hon thi bo, bao meta_error
 
 # ---------- Vong lap phan tich (Ngay 5) ----------
+# Ho so cua --fake nam o output/_fake/<bai>/, tach khoi ho so that. Thu muc nay KHONG duoc dong bo len R2
+# (ham sync lam o muc 5 phai bo qua no).
+FAKE_OUTPUT_SUBDIR = "_fake"
 ANALYSIS_MAX_RETRIES = 3             # so lan goi lai AI cho moi cau hoi sau lan dau
+ANALYSIS_UNDERSTAND_MAX_RETRIES = 3  # so lan goi lai AI dien giai de sau lan dau, khi nguoi dung gop y
 ANALYSIS_FEEDBACK_STDERR_CHARS = 1500  # error_feedback chi giu chung nay ky tu cuoi cua stderr
 ANALYSIS_MASK_MIN_CHARS = 4          # gia tri cot che ngan hon thi khong thay (tranh thay nham)
 # Bao ve do dai prompt buoc giai: token ~ ky tu / PROMPT_CHARS_PER_TOKEN + PROMPT_SCHEMA_TOKENS (chi dan schema

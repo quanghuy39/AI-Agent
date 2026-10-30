@@ -18,14 +18,17 @@ class FakeLLM:
     script: danh sach phan tu (chuoi van ban, dict -> json.dumps, hoac exception de nem ra),
             hoac dict role -> danh sach nhu tren.
     usage_log_path: file usage mac dinh khi chua goi set_usage_log_path. None: lay theo llm.yaml.
+    by_schema: {schema pydantic: phan tu nhu tren}. Luot goi co schema nay luon nhan phan tu do, khong theo thu tu
+               va khong het (dung cho kich ban chay tiep duoc tu pha bat ky).
     """
 
-    def __init__(self, script, usage_log_path=None):
+    def __init__(self, script=(), usage_log_path=None, by_schema=None):
         if isinstance(script, dict):
             self._script = {role: list(items) for role, items in script.items()}
         else:
             self._script = {None: list(script)}
         self._usage_log_path = usage_log_path
+        self._by_schema = dict(by_schema or {})
         self.calls = []
 
     def _next(self, role):
@@ -66,7 +69,7 @@ class FakeLLM:
             "messages": messages, "role": role, "json_schema": json_schema,
             "task_id": task_id, "use_cache": use_cache, "model_key": model_key,
         })
-        item = self._next(role)
+        item = self._by_schema[json_schema] if json_schema in self._by_schema else self._next(role)
         model_key = model_key or FAKE
         common = {"role": role, "task_id": task_id, "model_key": model_key}
 

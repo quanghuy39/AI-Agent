@@ -28,6 +28,7 @@ FILES = {
     f"answers/{TASK}/key.json": "{}",
 }
 
+RESTATEMENT = {"restatement": "Tính tổng theo khách rồi đếm khách lớn.", "goals": ["Tổng theo khách", "Số khách lớn"]}
 PLAN = {"understanding": "Tổng theo khách rồi đếm khách lớn.",
         "requirements": ["Tổng amount theo khách hàng", "Số khách có tổng > 70"],
         "sub_questions": [{"key": "Q1", "question": "Tổng amount theo khách?", "covers": [1]},
@@ -93,7 +94,7 @@ def env(tmp_path, monkeypatch):
 
 
 def run(script, **kw):
-    fake = llm.FakeLLM({"analysis": list(script)})
+    fake = llm.FakeLLM({"analysis": [RESTATEMENT, *script]})  # pha understand goi AI truoc ke hoach
     kw.setdefault("yes", True)
     kw.setdefault("sensitive", ["CUSTOMER.customer_id"])
     with llm.use_fake(fake):
@@ -126,11 +127,11 @@ def test_success_two_questions_with_dependency(env):
     assert len(decisions) == 2 and all(d.status.value == "confirmed" for d in decisions)
     assert "ORDERS.amount: >= 0" in decisions[1].text
     assert all(c["task_id"] == TASK and c["role"] == "analysis" for c in fake.calls)
-    step2_prompt = prompts(fake)[2]
+    step2_prompt = prompts(fake)[3]
     assert "D1 [metric_definition]" in step2_prompt and "q1.csv" in step2_prompt and "R1" in step2_prompt
     actions = [e.action for e in led.read_log() if e.step == "analysis"]
     assert actions[0] == "load_context" and "plan" in actions and actions[-1] == "done"
-    assert sum(1 for e in led.read_log() if e.step == "llm") == 3  # usage cua FakeLLM vao run_log
+    assert sum(1 for e in led.read_log() if e.step == "llm") == 4  # usage cua FakeLLM vao run_log
 
 
 # (b) loi runner roi sua duoc
@@ -138,7 +139,7 @@ def test_runner_error_then_fixed(env):
     bad = step("import os\nprint(1/0)\n", ["q1.csv"])
     code, fake = run([PLAN, bad, STEP1, STEP2])
     assert code == loop.DONE and len(ledger(env).results()) == 2
-    retry_prompt = prompts(fake)[2]
+    retry_prompt = prompts(fake)[3]
     assert "Code lỗi" in retry_prompt and "ZeroDivisionError" in retry_prompt
     assert "Errors from the previous attempt" in retry_prompt
 
@@ -147,7 +148,7 @@ def test_runner_error_then_fixed(env):
 def test_retries_exhausted_stops_with_open_item(env):
     bad = step("raise SystemExit(4)\n", ["q1.csv"])
     code, fake = run([PLAN, bad, bad], max_retries=1)
-    assert code == loop.STOPPED and len(fake.calls) == 3
+    assert code == loop.STOPPED and len(fake.calls) == 4
     led = ledger(env)
     assert led.results() == []
     assert any("Q1: không giải được sau 2 lần thử" in o.text for o in led.open_items())
@@ -158,21 +159,21 @@ def test_missing_custom_checks_fed_back(env):
     thin = step(Q1_CODE, ["q1.csv"], risks=("rủi ro 1", "rủi ro 2"))
     code, fake = run([PLAN, thin, STEP1, STEP2])
     assert code == loop.DONE
-    retry_prompt = prompts(fake)[2]
+    retry_prompt = prompts(fake)[3]
     assert "Lỗi cấu trúc cần sửa" in retry_prompt and "2 ý nhưng meta chỉ có 1 check custom" in retry_prompt
 
 
 def test_missing_meta_fed_back(env):
     no_meta = step("print('xong')\n", ["q1.csv"])
     code, fake = run([PLAN, no_meta, STEP1, STEP2])
-    assert code == loop.DONE and "không có file meta hợp lệ" in prompts(fake)[2]
+    assert code == loop.DONE and "không có file meta hợp lệ" in prompts(fake)[3]
 
 
 # (e) n o buoc xac nhan
 def test_reject_plan_stops_without_runner(env, monkeypatch):
     monkeypatch.setattr(runner, "run_code", lambda *a, **k: pytest.fail("không được chạy runner"))
-    code, fake = run([PLAN], yes=False, ask_user=lambda q: "n")
-    assert code == loop.STOPPED and len(fake.calls) == 1
+    code, fake = run([PLAN], yes=False, ask_user=lambda q: "n" if "kế hoạch" in q else "y")
+    assert code == loop.STOPPED and len(fake.calls) == 2
     led = ledger(env)
     assert led.decisions() == [] and any("chưa được chấp nhận" in o.text for o in led.open_items())
 
@@ -184,7 +185,7 @@ def test_cannot_answer_plan_stops(env):
 
 def test_flags_recorded_with_finding_and_n_stops(env):
     flagged = step(Q1_CODE.replace("'passed': bool((o['amount'] >= 0).all())", "'passed': False"), ["q1.csv"])
-    answers = iter(["y", "n"])  # chap nhan ke hoach, roi dung khi co co
+    answers = iter(["y", "y", "n"])  # xac nhan de, chap nhan ke hoach, roi dung khi co co
     code, _ = run([PLAN, flagged], yes=False, ask_user=lambda q: next(answers))
     assert code == loop.STOPPED
     led = ledger(env)
@@ -214,7 +215,7 @@ def test_masked_values_never_reach_ai(env):
                  "print(c.head())\nraise ValueError('khách lỗi: ' + c['customer_id'][0])\n", ["q1.csv"])
     code, fake = run([PLAN, leaky, STEP1, STEP2])
     assert code == loop.DONE
-    retry = prompts(fake)[2]
+    retry = prompts(fake)[3]
     assert "[đã che]" in retry and "ValueError" in retry
     for p in prompts(fake):
         assert not any(c in p for c in IDS)
@@ -258,7 +259,7 @@ def test_plan_missing_requirement_is_schema_error():
 def test_plan_without_coverage_stops_loop(env):
     plan = {**PLAN, "requirements": PLAN["requirements"] + ["Yêu cầu bị bỏ sót"]}
     code, fake = run([plan])
-    assert code == loop.EXHAUSTED and len(fake.calls) == 1  # FakeLLM khong thu lai; khong giai cau nao
+    assert code == loop.ERROR and len(fake.calls) == 2  # FakeLLM khong thu lai; khong giai cau nao
 
 
 # ---------- do dai prompt ----------
@@ -314,19 +315,19 @@ def test_loop_cuts_prompt_and_still_calls_ai(env, monkeypatch):
 
     monkeypatch.setattr(loop, "fit_prompt", tight)
     code, fake = run([PLAN, STEP1, STEP2])
-    assert code == loop.DONE and len(fake.calls) == 3 and len(seen) == 2  # da cat va van goi AI
+    assert code == loop.DONE and len(fake.calls) == 4 and len(seen) == 2  # da cat va van goi AI
     order = ["previous_results", "error_feedback", "confirmed_decisions"]
     for info in seen:
         assert info["cut"] and info["cut"] == order[:len(info["cut"])]  # cat dung thu tu, dung o buoc du
         assert info["tokens_after"] < info["tokens_before"]
-    assert "keys: n_customers" in prompts(fake)[2]  # Q2 nhan previous_results ban rut gon
+    assert "keys: n_customers" in prompts(fake)[3]  # Q2 nhan previous_results ban rut gon
 
 
 def test_loop_stops_when_prompt_too_long(env, monkeypatch):
     monkeypatch.setattr(loop, "min_input_tokens", lambda role="analysis": 100)
     code, fake = run([PLAN, STEP1])
     assert code == loop.STOPPED
-    assert [c["json_schema"].__name__ for c in fake.calls] == ["AnalysisPlan"]  # 0 lan goi AI cho buoc giai
+    assert [c["json_schema"].__name__ for c in fake.calls] == ["ProblemRestatement", "AnalysisPlan"]  # 0 lan goi AI cho buoc giai
     led = ledger(env)
     assert any("prompt quá dài so với model nhỏ nhất" in o.text for o in led.open_items())
     ev = next(e for e in led.read_log() if e.action == "prompt_fit")

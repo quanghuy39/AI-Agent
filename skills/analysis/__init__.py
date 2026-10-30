@@ -1,4 +1,4 @@
-"""Skill phan tich: prompt (plan.md, step.md, contract.md) va schema (schemas.py).
+"""Skill phan tich: prompt (understand.md, plan.md, step.md, contract.md) va schema (schemas.py).
 
 render_prompt dung string.Template.substitute: thieu bien thi KeyError; $contract tu chen tu contract.md.
 """

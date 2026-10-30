@@ -10,8 +10,10 @@ from ledger.schema import (
     LogEvent,
     OpenItem,
     OpenItemStatus,
+    Phase,
     ResultEntry,
     ResultStatus,
+    RunState,
 )
 
 __all__ = [
@@ -26,6 +28,8 @@ __all__ = [
     "LogEvent",
     "OpenItem",
     "OpenItemStatus",
+    "Phase",
     "ResultEntry",
     "ResultStatus",
+    "RunState",
 ]

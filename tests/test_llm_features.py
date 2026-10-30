@@ -617,6 +617,29 @@ def test_k_fake_validates_schema(fake_usage):
     assert ei.value.attempts[0]["reason"] == "json_invalid"
 
 
+def test_k_fake_by_schema_repeats_regardless_of_order(fake_usage):
+    fake = FakeLLM(["theo thứ tự"], by_schema={Item: {"name": "x", "qty": 1}})
+    assert fake.ask_model(msgs(), "r1", json_schema=Item).data == Item(name="x", qty=1)
+    assert fake.ask_model(msgs(), "r1").text == "theo thứ tự"  # khong tieu kich ban
+    assert fake.ask_model(msgs(), "r1", json_schema=Item).data == Item(name="x", qty=1)
+
+
+def test_k_fake_by_schema_other_schema_is_out_of_script_not_exhausted(fake_usage):
+    class Other(BaseModel):
+        x: int
+
+    with pytest.raises(AssertionError, match="hết"):
+        FakeLLM(by_schema={Item: {"name": "x", "qty": 1}}).ask_model(msgs(), "r1", json_schema=Other)
+
+
+def test_chain_exhausted_json_invalid_only():
+    bad = {"model_key": "a", "reason": "json_invalid", "status_code": None}
+    limit = {"model_key": "b", "reason": "rate_limit", "status_code": 429}
+    assert LLMChainExhausted("x", attempts=[bad, bad]).json_invalid_only
+    assert not LLMChainExhausted("x", attempts=[bad, limit]).json_invalid_only
+    assert not LLMChainExhausted("x").json_invalid_only
+
+
 def test_l_fake_chain_exhausted(fake_usage):
     exc = LLMChainExhausted(
         "hết chuỗi", attempts=[{"model_key": "a1", "reason": "rate_limit", "status_code": 429}],

@@ -37,6 +37,7 @@ from pydantic import BaseModel, Field
 import config
 from config import ROOT
 from ledger import Ledger
+from ledger.ledger import SUPERSEDED_DIR
 from storage import r2
 
 OUTPUT_DIR = ROOT / "output"
@@ -312,7 +313,8 @@ def run_code(code, task, step_name, timeout=None):
             os.chmod(dst, stat.S_IREAD)
             result.input_hashes[rel] = _sha256(dst)
         input_dir.mkdir(exist_ok=True)
-        shutil.copytree(real_work, work_dir)  # file trung gian cua cac buoc truoc
+        # file trung gian cua cac buoc truoc; khong dua file cua lan lam truoc (--restart) cho code AI
+        shutil.copytree(real_work, work_dir, ignore=shutil.ignore_patterns(SUPERSEDED_DIR))
 
         before = _snapshot(work_dir)
         execute(code, input_dir, work_dir, run_dir, meta_path, timeout, result)

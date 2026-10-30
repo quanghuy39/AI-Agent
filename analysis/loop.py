@@ -1,10 +1,11 @@
-"""Vong lap phan tich: lap ke hoach -> xac nhan -> tung cau hoi (AI viet code, runner chay, cham meta, ghi so).
+"""Cac pha phan tich: hieu de, tong quan du lieu, lap ke hoach, tung cau hoi (AI viet code, runner chay, cham meta,
+ghi so), tong hop. Thu tu pha, luu tien do va ma thoat nam o main.py (run_task); module nay khong co luong rieng.
 
 Chay: python -m analysis.loop <task> [--sensitive BANG.cot ...] [--use-fake] [--max-retries 3] [--yes]
 --yes tu tra loi "y" (chi dung khi test). --use-fake dung FakeLLM voi kich ban demo (khong goi AI that).
 
-Ma thoat: 0 xong; 1 loi cau hinh/yeu cau AI; 2 het han muc chuoi model (chay tiep sau); 3 dung giua chung
-(nguoi dung chon n, het so lan thu, AI bao khong tra loi duoc).
+Ma thoat: 0 xong; 1 loi cau hinh/yeu cau AI hoac loi R2; 2 het han muc chuoi model (chay lai de tiep tuc); 3 dung
+giua chung (nguoi dung chon n, het so lan thu, AI bao khong tra loi duoc, ban tom tat lo gia tri che).
 Moi chuoi dua lai cho AI deu qua mask_text: gia tri that cua cot che -> [đã che]. Gia tri that chi o bo nho.
 """
 
@@ -18,19 +19,21 @@ from pathlib import Path
 import config
 import llm
 from analysis.meta_grader import grade_meta, read_local_table
-from ledger import Ledger
-from llm import LLMChainExhausted, LLMConfigError, LLMError, LLMRequestError
+from ledger import DecisionStatus, Ledger, ResultStatus
+from ledger.ledger import SUPERSEDED_DIR
+from ledger.schema import now_iso
 from profiling import quality
 from profiling.data_summary import build_data_summary
 from runner import run_code as runner
 from skills.analysis import render_prompt
-from skills.analysis.schemas import AnalysisPlan, AnalysisStep
+from skills.analysis.schemas import AnalysisPlan, AnalysisStep, ProblemRestatement
 from storage import r2
 
 MASK = "[đã che]"
 PROBLEM_FILE = "de_bai.md"
 ROLE = "analysis"
 DONE, ERROR, EXHAUSTED, STOPPED = 0, 1, 2, 3
+CHAIN_OPEN_ITEM = "hết hạn mức chuỗi, chạy tiếp sau (chuỗi model analysis)"
 
 
 class StopLoop(Exception):
@@ -52,6 +55,7 @@ class Context:
     masked_values: set = field(default_factory=set, repr=False)
     decisions: list = field(default_factory=list)   # dong "- D1 [kind] text" da xac nhan
     input_limit: int | None = None                  # max_input_tokens nho nhat cua chuoi analysis (nap lan dau)
+    sensitive: list = field(default_factory=list)   # "BANG.cot" da dung: --sensitive + mac dinh cua bai
     _mask_re: object = field(default=None, repr=False)
 
     def mask(self, text):
@@ -121,12 +125,16 @@ def load_context(task, sensitive=None):
     report = profile.get(quality.REPORT_KEY) if isinstance(profile, dict) else None
     if report is None:
         report = quality.profile_problem(task)
-    summary = build_data_summary(report, sensitive=_sensitive(task, report, sensitive),
-                                 max_chars=config.SUMMARY_MAX_CHARS)
+    columns = _sensitive(task, report, sensitive)
+    try:
+        summary = build_data_summary(report, sensitive=columns, max_chars=config.SUMMARY_MAX_CHARS)
+    except ValueError as e:  # bang/cot trong --sensitive khong ton tai
+        raise StopLoop(f"Cột che không hợp lệ: {e}") from None
     prefix = f"{r2.get_r2_settings()['R2_INPUT_PREFIX']}{task}/"
     ctx = Context(task=task, problem=problem, summary=summary, ledger=led, input_dir=r2.CACHE_DIR / prefix,
                   work_dir=runner.OUTPUT_DIR / task / "work",
-                  masked_values=_masked_values(report, summary["masked_columns"]))
+                  masked_values=_masked_values(report, summary["masked_columns"]), sensitive=columns,
+                  decisions=[_decision_line(d) for d in led.decisions() if d.status == DecisionStatus.CONFIRMED])
     led.log_event("analysis", "load_context", inputs={"task": task},
                   extra={"summary_chars": summary["chars"], "level": summary["level"],
                          "masked_columns": summary["masked_columns"], "n_masked_values": len(ctx.masked_values)})
@@ -194,11 +202,69 @@ def fit_prompt(render, variables, shortened, limit):
     return (text if info["tokens_after"] <= budget else None), info
 
 
+def _decision_line(d):
+    return f"- {d.id} [{d.kind.value}] {d.text}"
+
+
 def _add_confirmed(ctx, kind, text, required=True):
+    """Ghi va xac nhan quyet dinh; da co quyet dinh confirmed cung noi dung thi khong them (chay lai, --restart)."""
+    for d in ctx.ledger.decisions():
+        if d.status == DecisionStatus.CONFIRMED and d.kind == kind and d.text == text:
+            return d.id
     d = ctx.ledger.add_decision(kind, text, required=required)
     ctx.ledger.confirm_decision(d.id)
-    ctx.decisions.append(f"- {d.id} [{kind}] {text}")
+    ctx.decisions.append(_decision_line(d))
     return d.id
+
+
+# ---------- hieu de ----------
+
+def print_restatement(r):
+    print(f"\nDiễn giải đề: {r.restatement}")
+    print("Mục tiêu:")
+    for g in r.goals:
+        print(f"  - {g}")
+    if r.ambiguities:
+        print("Điểm chưa rõ:")
+        for a in r.ambiguities:
+            print(f"  - {a}")
+
+
+def understand(ctx, yes, ask_user):
+    """AI dien giai lai de, nguoi dung xac nhan. Khong dong y: go chinh sua, goi lai AI (toi da
+    ANALYSIS_UNDERSTAND_MAX_RETRIES lan). Dong y -> set_problem; khong chot duoc -> open_item + StopLoop."""
+    corrections, previous = [], "(none)"
+    for attempt in range(config.ANALYSIS_UNDERSTAND_MAX_RETRIES + 1):
+        r = _ask(ctx, "understand", ProblemRestatement, previous_restatement=previous,
+                 user_corrections="\n".join(f"- {c}" for c in corrections) or "(none)")
+        ctx.ledger.log_event("analysis", "understand", extra={"attempt": attempt + 1, "n_goals": len(r.goals),
+                                                              "n_ambiguities": len(r.ambiguities)})
+        print_restatement(r)
+        if confirm("Diễn giải này đúng với đề bài?", yes, ask_user):
+            ctx.ledger.set_problem({"problem": ctx.problem, "restatement": r.model_dump(),
+                                    "user_corrections": corrections, "confirmed_at": now_iso()})
+            return
+        if attempt == config.ANALYSIS_UNDERSTAND_MAX_RETRIES:
+            break
+        text = ask_user("Gõ chỉnh sửa (để trống để dừng): ").strip()
+        if not text:
+            break
+        corrections.append(text)
+        previous = r.restatement
+    ctx.ledger.add_open_item_once("Chưa chốt được cách hiểu đề; chạy lại để AI diễn giải lại.")
+    ctx.ledger.log_event("analysis", "confirm_problem", status="rejected")
+    raise StopLoop("Người dùng chưa xác nhận cách hiểu đề.")
+
+
+def explore(ctx):
+    """Tong quan du lieu. Profile va ban tom tat da co tu load_context: phai co truoc understand vi de gui AI can
+    tap gia tri che lay tu profile."""
+    s = ctx.summary
+    masked = ", ".join(f"{m['table']}.{m['column']}" for m in s["masked_columns"]) or "không"
+    print(f"\nDữ liệu: tóm tắt {s['chars']} ký tự, mức cắt {s['level']}; cột che: {masked}")
+    for w in s["warnings"]:
+        print(f"Cảnh báo: {w}")
+    ctx.ledger.log_event("analysis", "explore", extra={"level": s["level"], "n_warnings": len(s["warnings"])})
 
 
 # ---------- ke hoach ----------
@@ -209,8 +275,20 @@ def _fmt_bounds(r):
     return f">= {r.min:g}" if r.min is not None else f"<= {r.max:g}"
 
 
+def _confirmed_understanding(ctx):
+    """Ban dien giai da xac nhan (problem.json) dang van ban cho prompt plan."""
+    record = ctx.ledger.get_problem() or {}
+    r = record.get("restatement") or {}
+    lines = [r.get("restatement") or "(none)"]
+    for title, items in (("Goals", r.get("goals")), ("Open points", r.get("ambiguities")),
+                         ("User corrections", record.get("user_corrections"))):
+        if items:
+            lines += [f"{title}:"] + [f"- {x}" for x in items]
+    return "\n".join(lines)
+
+
 def make_plan(ctx):
-    plan = _ask(ctx, "plan", AnalysisPlan)
+    plan = _ask(ctx, "plan", AnalysisPlan, confirmed_understanding=_confirmed_understanding(ctx))
     ctx.ledger.log_event("analysis", "plan", extra={"n_questions": len(plan.sub_questions),
                                                      "n_assumptions": len(plan.assumptions),
                                                      "cannot_answer": bool(plan.cannot_answer_reason)})
@@ -234,13 +312,23 @@ def print_plan(plan):
         print(f"  Khoảng đề xuất {r.column}: {_fmt_bounds(r)} ({r.reason})")
 
 
-def accept_plan(ctx, plan, yes, ask_user):
+def check_plan(ctx, plan):
+    """Ke hoach khong dung duoc -> open_item + StopLoop. Goi truoc khi luu ke hoach vao state."""
     if plan.cannot_answer_reason:
-        ctx.ledger.add_open_item(f"AI báo không trả lời được: {plan.cannot_answer_reason}")
+        ctx.ledger.add_open_item_once(f"AI báo không trả lời được: {plan.cannot_answer_reason}")
         raise StopLoop(f"AI báo không trả lời được: {plan.cannot_answer_reason}")
+    try:
+        topo_order(plan.sub_questions)
+    except ValueError as e:
+        ctx.ledger.add_open_item_once(f"Kế hoạch có {e}; cần lập lại kế hoạch.")
+        raise StopLoop(str(e)) from None
+
+
+def accept_plan(ctx, plan, yes, ask_user):
     print_plan(plan)
     if not confirm("Chấp nhận kế hoạch và các giả định?", yes, ask_user):
-        ctx.ledger.add_open_item("Kế hoạch phân tích chưa được chấp nhận; cần lập lại kế hoạch.")
+        ctx.ledger.add_open_item_once("Kế hoạch phân tích chưa được chấp nhận; chạy lại để xem lại, "
+                                      "hoặc --restart để làm lại từ đầu.")
         ctx.ledger.log_event("analysis", "confirm_plan", status="rejected")
         raise StopLoop("Người dùng không chấp nhận kế hoạch.")
     for a in plan.assumptions:
@@ -286,22 +374,26 @@ def build_feedback(run, grade=None):
     return "\n\n".join(parts)
 
 
-def _previous_results(ctx, results_by_key):
-    lines = [ctx.ledger.get_summary()]
-    files = sorted(p.relative_to(ctx.work_dir).as_posix() for p in ctx.work_dir.rglob("*") if p.is_file()) \
+def _work_files(ctx):
+    """Dong liet ke file trong work/ cho AI; bo _superseded/ (runner cung khong chep thu muc nay)."""
+    files = sorted(p.relative_to(ctx.work_dir).as_posix() for p in ctx.work_dir.rglob("*")
+                   if p.is_file() and SUPERSEDED_DIR not in p.relative_to(ctx.work_dir).parts) \
         if ctx.work_dir.is_dir() else []
-    lines.append("Files in output directory: " + (", ".join(files) if files else "(none)"))
+    return "Files in output directory: " + (", ".join(files) if files else "(none)")
+
+
+def _previous_results(ctx, results_by_key):
+    lines = [ctx.ledger.get_summary(), _work_files(ctx)]  # get_summary chi gom ket qua valid
     for key, rid in results_by_key.items():
         lines.append(f"{key} -> {rid}")
     return "\n".join(lines)
 
 
 def _short_previous(ctx, results_by_key):
-    """Ban rut gon: id, cau hoi, cac khoa result_summary, ten file trong work/."""
-    lines = [f"{r.id}: {r.question} | keys: {', '.join(r.result_summary) or '-'}" for r in ctx.ledger.results()]
-    files = sorted(p.relative_to(ctx.work_dir).as_posix() for p in ctx.work_dir.rglob("*") if p.is_file()) \
-        if ctx.work_dir.is_dir() else []
-    lines.append("Files in output directory: " + (", ".join(files) if files else "(none)"))
+    """Ban rut gon (chi ket qua valid): id, cau hoi, cac khoa result_summary, ten file trong work/."""
+    lines = [f"{r.id}: {r.question} | keys: {', '.join(r.result_summary) or '-'}" for r in ctx.ledger.results()
+             if r.status == ResultStatus.VALID]
+    lines.append(_work_files(ctx))
     lines += [f"{key} -> {rid}" for key, rid in results_by_key.items()]
     return "\n".join(lines)
 
@@ -381,8 +473,8 @@ def _record(ctx, q, step, run, grade, results_by_key, yes, ask_user):
         q.question, step.method, grade.result_summary, grade.checks,
         depends_on=[results_by_key[d] for d in q.depends_on],
         output_path="; ".join(_rel(ctx, p) for p in run.files_created) or None,
-        code_file=_rel(ctx, run.code_path))
-    results_by_key[q.key] = entry.id
+        code_file=_rel(ctx, run.code_path), question_key=q.key)
+    ctx.ledger.close_open_items_with_text(CHAIN_OPEN_ITEM)  # da chay tiep duoc: muc nay het y nghia
     ctx.ledger.log_event("analysis", "result", inputs={"question": q.key}, code_file=entry.code_file,
                          status="flag" if grade.flags else "ok", extra={"result_id": entry.id})
     if grade.flags:
@@ -397,61 +489,37 @@ def _record(ctx, q, step, run, grade, results_by_key, yes, ask_user):
     return entry.id
 
 
-# ---------- chay ca bai ----------
+# ---------- tong hop ----------
 
 def print_summary(ctx):
     print("\nKết quả:")
     for r in ctx.ledger.results():
+        if r.status != ResultStatus.VALID:
+            continue
         n_pass = sum(c.status.value == "pass" for c in r.checks)
         n_flag = sum(c.status.value == "flag" for c in r.checks)
         print(f"  {r.id} | {r.question} | {n_pass} pass, {n_flag} flag")
     print(f"Sổ kết quả và file: {ctx.ledger.root}")
 
 
-def run_loop(task, sensitive=None, max_retries=None, yes=False, ask_user=input):
-    """Chay vong lap cho mot bai; tra ve ma thoat."""
-    max_retries = config.ANALYSIS_MAX_RETRIES if max_retries is None else max_retries
-    led = Ledger(runner.OUTPUT_DIR / task)
-    led.attach_usage_log()  # moi luot goi AI ghi vao run_log.jsonl
-    ctx = None
-    try:
-        ctx = load_context(task, sensitive)
-        plan = make_plan(ctx)
-        accept_plan(ctx, plan, yes, ask_user)
-        results_by_key = {}
-        try:
-            order = topo_order(plan.sub_questions)
-        except ValueError as e:
-            ctx.ledger.add_open_item(f"Kế hoạch có {e}; cần lập lại kế hoạch.")
-            raise StopLoop(str(e)) from None
-        for q in order:
-            solve_question(ctx, q, results_by_key, max_retries, yes, ask_user)
-        print_summary(ctx)
-        led.log_event("analysis", "done", extra={"results": list(results_by_key.values())})
-        return DONE
-    except StopLoop as e:
-        print(f"Dừng: {e}")
-        led.log_event("analysis", "stop", status="stopped")
-        if ctx is not None:
-            print_summary(ctx)
-        return e.code
-    except LLMChainExhausted as e:
-        led.add_open_item("hết hạn mức chuỗi, chạy tiếp sau (chuỗi model analysis)")
-        led.log_event("analysis", "stop", status="chain_exhausted", extra={"next_available_at": e.next_available_at})
-        print(f"Hết hạn mức chuỗi model. Có thể chạy lại sau: {e.next_available_at}")
-        return EXHAUSTED
-    except (LLMConfigError, LLMRequestError, LLMError) as e:
-        led.log_event("analysis", "stop", status="llm_error", extra={"error_type": type(e).__name__})
-        print(f"Lỗi gọi AI ({type(e).__name__}): {e}")
-        return ERROR
-    finally:
-        led.detach_usage_log()
+def synthesize(ctx, yes, ask_user):
+    """Khung pha tong hop. TODO Ngay 7: viet ket luan that thay cho bang ket qua."""
+    print_summary(ctx)
+    if not confirm("Chấp nhận kết luận?", yes, ask_user):
+        raise StopLoop("Người dùng chưa chấp nhận kết luận.")
 
 
 # ---------- CLI ----------
 
+def run_loop(task, **kwargs):
+    """Lop mong: luong that la main.run_task."""
+    import main as app  # lazy: main.py import module nay
+    return app.run_task(task, **kwargs)
+
+
 def demo_fake():
-    """FakeLLM voi kich ban demo tong quat: dem dong tung file CSV trong input (khong goi AI that)."""
+    """FakeLLM voi kich ban demo tong quat: dem dong tung file CSV trong input (khong goi AI that).
+    Tra loi theo loai prompt (schema), khong theo thu tu luot goi, de chay tiep o pha nao cung dung."""
     plan = {"understanding": "Demo: đếm số dòng từng bảng.", "assumptions": [],
             "requirements": ["Số dòng của từng bảng"],
             "sub_questions": [{"key": "Q1", "question": "Mỗi bảng có bao nhiêu dòng?", "covers": [1]}]}
@@ -469,7 +537,8 @@ json.dump(meta, open(os.environ["AGENT_META_PATH"], "w", encoding="utf-8"))
 '''
     step = {"explanation": "Đếm dòng từng file CSV.", "method": "pandas read_csv, len", "code": code,
             "can_be_wrong_if": ["Không có file CSV nào"], "output_files": ["demo_row_counts.csv"]}
-    return llm.FakeLLM({ROLE: [plan, step]})
+    restatement = {"restatement": "Demo: đếm số dòng từng bảng.", "goals": ["Số dòng của từng bảng"]}
+    return llm.FakeLLM(by_schema={ProblemRestatement: restatement, AnalysisPlan: plan, AnalysisStep: step})
 
 
 def main(argv=None):
@@ -480,11 +549,9 @@ def main(argv=None):
     p.add_argument("--max-retries", type=int, default=config.ANALYSIS_MAX_RETRIES)
     p.add_argument("--yes", action="store_true", help="tự trả lời y (chỉ dùng khi test)")
     args = p.parse_args(argv)
-    kwargs = {"sensitive": args.sensitive, "max_retries": args.max_retries, "yes": args.yes}
-    if args.use_fake:
-        with llm.use_fake(demo_fake()):
-            return run_loop(args.task, **kwargs)
-    return run_loop(args.task, **kwargs)
+    import main as app  # lazy: main.py import module nay
+    return app.run_cli(args.task, fake=args.use_fake, sensitive=args.sensitive, max_retries=args.max_retries,
+                       yes=args.yes)
 
 
 if __name__ == "__main__":

@@ -13,7 +13,8 @@ from skills.analysis import load_prompt, render_prompt
 from skills.analysis.schemas import AgentMeta, AnalysisPlan, AnalysisStep, Assumption, ProposedRange, SubQuestion
 
 PLACEHOLDER_RE = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})")
-PLAN_VARS = {"problem": "", "data_summary": ""}
+UNDERSTAND_VARS = {"problem": "", "previous_restatement": "", "user_corrections": ""}
+PLAN_VARS = {"problem": "", "data_summary": "", "confirmed_understanding": ""}
 STEP_VARS = {"problem": "", "data_summary": "", "confirmed_decisions": "", "previous_results": "",
              "question": "", "error_feedback": ""}
 ASSUMPTION = {"kind": "metric_definition", "text": "Doanh thu = tổng amount của đơn hoàn tất", "required": True}
@@ -171,7 +172,7 @@ def test_render_fills_all_placeholders(name, variables):
     assert "AGENT_META_PATH" in text  # contract duoc chen tu dong
 
 
-@pytest.mark.parametrize("name, variables", [("plan", PLAN_VARS), ("step", STEP_VARS)])
+@pytest.mark.parametrize("name, variables", [("understand", UNDERSTAND_VARS), ("plan", PLAN_VARS), ("step", STEP_VARS)])
 def test_render_missing_variable(name, variables):
     for missing in variables:
         with pytest.raises(KeyError):
@@ -184,7 +185,7 @@ def test_prompt_lengths():
 
 
 def test_prompts_are_generic():
-    text = "\n".join(load_prompt(n) for n in ("plan", "step", "contract")).lower()
+    text = "\n".join(load_prompt(n) for n in ("understand", "plan", "step", "contract")).lower()
     for specific in ("bai0", "bai1", "bai2", "customer", "order", "csat", "support_ticket", "khóa trùng",
                      "duplicate key", "drop_duplicates", ".csv"):
         assert specific not in text

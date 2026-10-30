@@ -17,16 +17,19 @@ Trạng thái từng ngày: xem `PROGRESS.md`.
   `relationships.py`, `data_summary.py` (bản tóm tắt đã che cho AI).
 - `validators/` – `rows.py`, `join.py`, `sums.py`, `ranges.py`, `result.py` (row_count/join/sum/range check).
 - `ledger/` – `schema.py`, `ledger.py`: hồ sơ bài ở `output/<bài>/` (results, decisions, findings, open_items,
-  data_profile, problem, run_log.jsonl).
+  data_profile, problem, state, run_log.jsonl; file của lần làm trước ở `work/_superseded/<thời điểm>/`).
 - `runner/run_code.py` – chạy code AI: thư mục tạm, input chỉ đọc, bỏ biến bí mật, quét ast, timeout, meta.
-- `analysis/` – `loop.py` (vòng lặp: lập kế hoạch → giải từng câu → chấm meta → ghi sổ), `meta_grader.py`.
-- `skills/analysis/` – `plan.md`, `step.md`, `contract.md` (prompt), `schemas.py` (AnalysisPlan, AnalysisStep,
-  AgentMeta), `__init__.py` (load_prompt, render_prompt).
+- `main.py` – luồng duy nhất: máy trạng thái understand → explore → plan → loop → synthesize → done, lưu `state.json`
+  sau mỗi pha, chuyển exception thành mã thoát (`exit_code_for`).
+- `analysis/` – `loop.py` (hàm của từng pha: hiểu đề, lập kế hoạch, giải từng câu, chấm meta, ghi sổ; `run_loop` và CLI
+  chỉ gọi sang `main.py`), `meta_grader.py`.
+- `skills/analysis/` – `understand.md`, `plan.md`, `step.md`, `contract.md` (prompt), `schemas.py` (ProblemRestatement,
+  AnalysisPlan, AnalysisStep, AgentMeta), `__init__.py` (load_prompt, render_prompt).
 - `report/`, `slides/` – mới có `__init__.py` (chưa làm).
 - `templates/data_dictionary_template.md` – mẫu data dictionary.
 - `tests/` – pytest `test_*.py`; script chạy tay (`grade_bai0b.py`, `try_ask_model.py`, `list_models.py`,
   `probe_*.py`, `make_*.py`); `tests/llm_eval/` bộ kiểm định model (cases, scoring, run_eval, summary, thresholds.yaml).
-- `main.py` – còn rỗng. `Dockerfile` – python:3.12-slim (chưa COPY `analysis/`, xem PROGRESS.md).
+- `Dockerfile` – python:3.12-slim, chạy `main.py`.
 - Không lên git: `.env`, `.venv/`, `cache/`, `output/`, `test_data/`, `tests/llm_eval/results/`.
 
 ## Lệnh thường dùng (PowerShell, trong `.venv`)
@@ -38,15 +41,19 @@ python -m storage.r2 head input/bai0a/CATEGORY.csv
 python -m profiling.quality bai0b [--no-samples] [--set TEN=GIATRI] [--range BANG.COT=MIN:MAX]
 python -m profiling.data_summary bai1 [--sensitive BANG.cot] [--max-chars N] [--no-samples] [--refresh]
 python -m runner.run_code bai1 path\to\code.py [--step TEN] [--timeout GIAY]
-python -m analysis.loop bai1 [--sensitive BANG.cot] [--use-fake] [--max-retries 3] [--yes]
+python main.py bai1 [--sensitive BANG.cot] [--restart] [--yes] [--fake]   # chạy một bài, tiếp từ pha đang dở
+python -m analysis.loop bai1 [--sensitive BANG.cot] [--use-fake] [--max-retries 3] [--yes]   # cùng luồng main.py
 python -m tests.grade_bai0b                           # chấm profiling bài 0b bằng answers/ (quyền grader)
 python -m tests.grade_bai0a                           # chấm kết quả bài 0a (quyền grader, đáp án qua grader_download, không ghi cache)
 python -m tests.grade_bai1                            # chấm bài 1 (như trên); đối chiếu theo từ khóa, LỆCH/CẦN NGƯỜI XEM cần người xem lại
 python tests/llm_eval/run_eval.py --list              # số case theo role
 python tests/llm_eval/run_eval.py --model <key> --role analysis [--limit N] [--resume] --yes   # GỌI API THẬT
 ```
-`analysis.loop` trả mã: 0 xong, 1 lỗi gọi AI, 2 hết hạn mức chuỗi model, 3 dừng (StopLoop: người dùng từ chối,
-prompt quá dài, ...).
+`main.py` và `analysis.loop` trả mã: 0 xong, 1 lỗi gọi AI hoặc lỗi R2, 2 hết hạn mức chuỗi model (chạy lại để tiếp tục),
+3 dừng (StopLoop: người dùng từ chối, prompt quá dài, `--sensitive` khác state, ...; hoặc bản tóm tắt lộ giá trị che).
+Chạy lại: tiếp từ pha trong `state.json`; câu đã giải lấy từ `Ledger.results_by_question()` (chỉ kết quả valid).
+`--sensitive` chốt vào state ở lần chạy đầu, muốn đổi thì `--restart --sensitive ...`. `--restart` chuyển kết quả valid
+thành superseded và toàn bộ file `work/` sang `work/_superseded/<thời điểm>/`; decisions và run_log giữ nguyên.
 Lọc output tiếng Việt bằng `Select-String` cần `[Console]::OutputEncoding = [Text.Encoding]::UTF8`.
 
 ## Quy tắc bất biến

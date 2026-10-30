@@ -11,9 +11,9 @@ Cập nhật: 30/10/2026. Nguồn: git log, code trong repo, tóm tắt cuối n
 | 3 | Xong | `ledger/` (hồ sơ bài ở `output/<bài>/`), usage log nối vào `run_log.jsonl`, Dockerfile build và chạy được. 238 test pass. |
 | 4 | Xong | `profiling/` (quality, dictionary, flags, relationships, data_summary), `validators/`, khoảng hợp lệ trong dictionary; `tests.grade_bai0b` đạt 5/5 lỗi cài sẵn. 476 test pass. |
 | 5 | Xong | Runner, skill phân tích, meta_grader, `analysis.loop`, fit_prompt, bộ kiểm định theo skill thật; chốt chuỗi analysis. Bài 0a ĐẠT toàn bộ; bài 1 chạy trọn 4 câu, số liệu đúng, phán đoán BI chưa đạt. 645 test pass. |
-| 6 | Chưa | Phạm vi theo ghi chú: điểm dừng đầy đủ (dựa `pending_required()`), đồng bộ hồ sơ lên R2, quality_flags thành mục chờ xác nhận; thêm các bài học ở mục "Bài học chung cho Ngày 6". Phạm vi đầy đủ: chưa xác nhận. |
+| 6 | Đang làm | Mục 1 xong (chưa commit): điều phối theo pha trong `main.py`, chạy tiếp được, `--fake` tách hồ sơ. 702 test pass. Còn lại theo ghi chú: tách `accept_plan`/`_add_confirmed` thành pending (dựa `pending_required()`), quality_flags thành decision, đồng bộ hồ sơ lên R2; thêm các bài học ở mục "Bài học chung cho Ngày 6". Phạm vi đầy đủ: chưa xác nhận. |
 | 7 | Chưa | Chưa xác nhận (thư mục `report/`, `slides/` mới có `__init__.py`). |
-| 8 | Chưa | Chưa xác nhận (ghi chú: `LLM_CONFIG_PATH` kiểu Windows không dùng được trong container; `main.py` còn rỗng). |
+| 8 | Chưa | Chưa xác nhận (ghi chú: `LLM_CONFIG_PATH` kiểu Windows không dùng được trong container). |
 
 ## Ngày 5
 
@@ -65,6 +65,38 @@ Cập nhật: 30/10/2026. Nguồn: git log, code trong repo, tóm tắt cuối n
   trên bài 1 thật: lần chạy sau khi thêm phép kiểm, R1 đến R4 đều 0 flag; R3 và R4 có "lần 1 chưa đạt" rồi đạt, trong khi
   lần trước R4 còn cờ join. Nhiều khả năng do phép kiểm mới; chưa đối chiếu run_log.
 
+## Ngày 6
+
+Mục 1, điều phối theo pha (chưa commit, mới kiểm bằng FakeLLM và R2 giả, chưa chạy bài thật):
+- `main.py`: `python main.py <bài> [--sensitive BANG.cot] [--restart] [--yes] [--fake]`, máy trạng thái understand →
+  explore → plan → loop → synthesize → done, ghi `state.json` sau mỗi pha (phase, plan, sensitive, updated_at).
+  `python -m analysis.loop` chỉ gọi vào luồng này.
+- Chạy lại tiếp từ pha đang dở: kế hoạch có trong state thì không gọi lại AI; phase đã qua plan nghĩa là đã chấp nhận;
+  câu có trong `results_by_question()` (`question_key`, chỉ kết quả valid) thì bỏ qua; câu dở giải lại từ lần thử 1.
+- Pha understand: `skills/analysis/understand.md`, schema `ProblemRestatement`; không đồng ý thì gõ chỉnh sửa, gọi lại AI
+  tối đa 3 lần sau lần đầu (`ANALYSIS_UNDERSTAND_MAX_RETRIES`); bản đã xác nhận ở `problem.json`, là đầu vào của pha plan.
+- `load_context` chạy trước understand vì đề gửi AI cần tập giá trị che lấy từ profile; pha explore chỉ in tổng quan.
+- Pha synthesize mới là khung (bảng kết quả + một xác nhận), TODO Ngày 7.
+- `--sensitive`: chốt vào state ở lần chạy đầu (gồm cả mặc định của bài), chạy tiếp dùng state, truyền khác thì dừng và
+  gợi ý `--restart`; `--restart` không kèm `--sensitive` thì giữ danh sách cũ, không âm thầm bỏ che.
+- `--restart`: kết quả valid thành superseded, `output_path` trỏ chỗ mới, toàn bộ file `work/` sang
+  `work/_superseded/<thời điểm>/`. Chuyển hết thay vì theo `output_path` vì runner chỉ ghi file có nội dung đổi, nên file
+  của lần thử hỏng rồi ghi lại y hệt không có trong `output_path`. Runner không chép `_superseded/` vào `AGENT_OUTPUT_DIR`.
+- `previous_results` và bảng kết quả in ra chỉ gồm kết quả valid; danh sách file bỏ `_superseded/`.
+- Open_item: không thêm trùng mục đang mở; mục "hết hạn mức" tự đóng khi ghi được một kết quả sau đó.
+- Mã thoát gom ở `exit_code_for`; bắt thêm `SensitiveLeakError` (mã 3) và lỗi R2 trên toàn luồng (mã 1, chỉ in tên lỗi).
+  Mọi model đều sai JSON/schema (`LLMChainExhausted.json_invalid_only`) báo là sai schema, mã 1, không ghi open_item; chỉ
+  hết chuỗi vì lý do khác mới báo hết hạn mức. Trước đó mọi `LLMChainExhausted` đều bị báo là hết hạn mức, kể cả khi chạy thật.
+- `--fake`: hồ sơ ghi vào `output/_fake/<bài>/` (`main.fake_output`, gồm cả state.json, work/, code/), in dòng "Chế độ giả
+  lập, hồ sơ ở output/_fake/<bài>" đầu lần chạy; hồ sơ thật không bị đụng tới. `output/_fake/` không được đồng bộ lên R2
+  (hàm sync làm ở mục 5, ghi chú ở `config.FAKE_OUTPUT_SUBDIR`).
+- `demo_fake` trả lời theo loại prompt (`FakeLLM(by_schema=...)`), không theo thứ tự, nên chạy tiếp ở pha nào cũng đúng.
+  Lỗi cũ: chạy tiếp bị lệch kịch bản, câu trả lời sai schema rồi báo nhầm là hết hạn mức.
+- `Dockerfile` thêm `COPY analysis/`. Chưa build được (Docker Desktop tắt); đã kiểm bằng cách chép đúng các mục COPY sang
+  thư mục trống rồi import và chạy `main.py --help`.
+- Dictionary bài 1 (bản trong `cache/input/bai1/`) không có thẻ `(SENSITIVE)`: `CUSTOMER.customer_id` chỉ có `(PK)`. Cột
+  này được che nhờ `config.ANALYSIS_DEFAULT_SENSITIVE`; `ORDER.customer_id` che theo quan hệ.
+
 ## Bài học chung cho Ngày 6
 Không viết riêng cho bài 1; đo trên bài 2.
 - So sánh giữa các nhóm phải nêu độ lớn khác biệt và mức chắc chắn.
@@ -99,9 +131,18 @@ Không viết riêng cho bài 1; đo trên bài 2.
 - Che giá trị chỉ thay chuỗi khớp nguyên văn (giá trị >= 4 ký tự); reason của check custom lấy nguyên từ meta.
 - Cache input có thể cũ nếu R2 lỗi kết nối (có cảnh báo `R2_UNREACHABLE`).
 - Runner và grader của bộ kiểm định không phải sandbox thật (quét tĩnh lách được bằng ghép chuỗi lúc chạy).
-- `run_log` chưa ghi lỗi 403 của runner (`ClientError` khi liệt kê R2 được ném ra trước khi ghi log).
+- `--restart` có thể ra lại đúng kế hoạch cũ: prompt plan không đổi thì trúng cache của `ask_model`; từ chối kế hoạch
+  chưa có chỗ góp ý.
+- Sau `--restart`, decisions cũ (giữ theo quyết định) vẫn được gửi cho AI trong `confirmed_decisions`.
+- Hồ sơ `bai1` tạo trước Ngày 6 không có `state.json` và `question_key`: lần chạy đầu giải lại mọi câu, kết quả cũ vẫn
+  valid (có in cảnh báo); nên dùng `--restart`.
+- LƯU Ý hồ sơ thật `bai0a`: `state.json` đang chứa kế hoạch demo ở phase `loop` (`problem.json` cũng là bản demo, tạo từ
+  `--fake` trước khi có `output/_fake/`), kèm open_item O2 "hết hạn mức" sinh ra từ báo sai. Lần chạy thật đầu tiên phải
+  dùng `python main.py bai0a --restart`.
+- Open_item O1 "Kế hoạch chưa được chấp nhận" không tự đóng sau khi kế hoạch được chấp nhận: để mục 2.
+- Bài đã `done` thì chạy lại chỉ báo xong, không đối chiếu `--sensitive`.
 - Hạn mức: Gemini 3.8 Flash 20 lượt/ngày, OpenRouter 50 lượt/ngày (`config/llm.yaml`).
-- `Dockerfile` chưa COPY `analysis/` (thêm khi đóng gói).
+- Chưa `docker build` lại sau khi thêm `COPY analysis/`.
 - `requirements.txt` hiện không có scipy (tóm tắt Ngày 1 có nhắc scipy): chưa xác nhận có cần không.
 - Dictionary bài 1, 2 nhắc bảng EXTERNAL_FACTOR, PRICE_CHANGE không có trong dữ liệu.
 - Kiểm định report/slide (dùng `--resume`), rồi đánh `validated: true` cho model qua ngưỡng.

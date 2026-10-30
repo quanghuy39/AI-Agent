@@ -65,6 +65,15 @@ class OpenItemStatus(StrEnum):
     CLOSED = "closed"
 
 
+class Phase(StrEnum):
+    UNDERSTAND = "understand"
+    EXPLORE = "explore"
+    PLAN = "plan"
+    LOOP = "loop"
+    SYNTHESIZE = "synthesize"
+    DONE = "done"
+
+
 class _Model(BaseModel):
     # extra="forbid": go sai ten truong thi bao loi thay vi lang le bo qua
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
@@ -79,6 +88,7 @@ class Check(_Model):
 class ResultEntry(_Model):
     id: str = Field(pattern=RESULT_ID)
     question: str
+    question_key: str | None = None  # key trong ke hoach (Q1, Q2...); ho so cu khong co
     method: str
     result_summary: dict[str, Any]  # so co nhan, vd {"total": 1234} -> {{R3.total}}
     output_path: str | None = None
@@ -160,6 +170,19 @@ class OpenItem(_Model):
     id: str = Field(pattern=OPEN_ITEM_ID)
     text: str
     status: OpenItemStatus = OpenItemStatus.OPEN
+
+
+class RunState(_Model):
+    """Tien do cua mot bai (state.json). phase: pha dang do. Cau nao da giai thi hoi Ledger.results_by_question."""
+    phase: Phase
+    plan: dict[str, Any] | None = None  # AnalysisPlan.model_dump
+    sensitive: list[str] | None = None  # cot che "BANG.cot" cua lan chay dau; None: chua chot
+    updated_at: str = Field(default_factory=now_iso)
+
+    @field_validator("updated_at")
+    @classmethod
+    def _updated_at_iso(cls, v):
+        return _check_iso(v)
 
 
 class LogEvent(_Model):
