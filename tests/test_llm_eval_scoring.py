@@ -221,7 +221,27 @@ def test_b_meta_details_structure_only(data_dir):
     details = {}
     score_case(CASES["A09_missing_column"], analysis("", reason="không có cột", risks=()), data_dir, details=details)
     assert details == {"meta_check_types": None, "n_can_be_wrong_if": 0, "n_custom_checks": None,
-                       "structural_errors": []}
+                       "structural_errors": [], "syntax_error_context": None}
+
+
+def test_b_syntax_error_context_masks_strings(data_dir):
+    secret = "C0048"
+    code = ('import os\n'
+            f'x = "{secret}"\n'
+            'n = 1\n'
+            'r = f"{int((df[\\"amount\\"] < 0).sum())} am"\n'
+            "y = 'cuoi " + secret + "'\n"
+            'z = 2\n')
+    details = {}
+    crit, why = score_case(CASES["A01_groupby_sum"], analysis(code), data_dir, details=details)
+    assert crit["code_runs"] is False and "SyntaxError dòng 4" in why["code_runs"]
+    ctx = details["syntax_error_context"]
+    assert ctx == ['3: n = 1', '4: r = f"...\\..."', '5: y = "..."']
+    assert secret not in json.dumps(details) and "amount" not in json.dumps(details)
+
+    details = {}
+    score_case(CASES["A01_groupby_sum"], reference(CASES["A01_groupby_sum"]), data_dir, details=details)
+    assert details["syntax_error_context"] is None
 
 
 def test_b_value_from_result_summary(data_dir):
@@ -452,6 +472,7 @@ def test_c_run_eval_full_resume_and_stop(tmp_path, capsys):
             "structural_errors"} <= set(lines[0])
     assert lines[0]["n_custom_checks"] == lines[0]["n_can_be_wrong_if"] == 1 and lines[0]["structural_errors"] == []
     assert "code" not in lines[0]
+    assert lines[0]["finish_reason"] == "stop" and lines[0]["syntax_error_context"] is None
     assert sleeps == [pytest.approx(60 / 30 * 1.2)]  # rpm=30 trong llm.yaml
     assert [c["model_key"] for c in fake.calls] == [MODEL, MODEL]
 

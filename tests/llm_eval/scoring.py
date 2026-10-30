@@ -319,6 +319,7 @@ def _is_environ(node):
 @dataclass
 class StaticReport:
     parse_error: str | None = None
+    parse_lineno: int | None = None
     used_columns: set = field(default_factory=set)
     created_columns: set = field(default_factory=set)
     strings: set = field(default_factory=set)
@@ -335,6 +336,7 @@ def static_check(code):
         tree = ast.parse(code)
     except SyntaxError as e:
         rep.parse_error = f"SyntaxError dòng {e.lineno}: {e.msg}"
+        rep.parse_lineno = e.lineno
         return rep
 
     for node in ast.walk(tree):
@@ -464,7 +466,29 @@ def meta_details(out, run):
         "n_can_be_wrong_if": len([x for x in out.can_be_wrong_if if x.strip()]) if out is not None else None,
         "n_custom_checks": sum(1 for t in types if t["type"] == "custom") if types is not None else None,
         "structural_errors": list(run.grade.structural_errors) if run and run.grade else [],
+        "syntax_error_context": None,
     }
+
+
+# chuoi dong trong dong, hoac (nhanh cuoi) chuoi khong dong: tu dau nhay toi het dong
+_STRING_RE = re.compile(r"""'{3}.*?'{3}|"{3}.*?"{3}|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|['"].*$""")
+
+
+def _mask_strings(line):
+    """Moi chuoi trong dau nhay -> "..." (chuoi goc co dau \\ thi thanh "...\\..." de con thay loi escape);
+    chuoi khong dong o cuoi dong -> "..." toi het dong."""
+    def mask(m):
+        return '"...\\..."' if "\\" in m.group(0) else '"..."'
+    return _STRING_RE.sub(mask, line)
+
+
+def syntax_error_context(code, lineno, radius=1):
+    """3 dong code quanh dong loi (dang "so: noi dung"), moi chuoi da thay bang "..."."""
+    if not lineno:
+        return None
+    lines = code.splitlines()
+    lo, hi = max(1, lineno - radius), min(len(lines), lineno + radius)
+    return [f"{i}: {_mask_strings(lines[i - 1])}" for i in range(lo, hi + 1)]
 
 
 def score_analysis(case, out, data_dir, timeout_s=30, details=None):
@@ -487,6 +511,8 @@ def score_analysis(case, out, data_dir, timeout_s=30, details=None):
     run = run_step(code, data_dir, out, timeout_s) if code and not rep.parse_error else None
     if details is not None:
         details.update(meta_details(out, run))
+        if rep.parse_error:
+            details["syntax_error_context"] = syntax_error_context(code, rep.parse_lineno)
 
     # code_runs, meta_valid
     if kind == "missing_column" and not code:

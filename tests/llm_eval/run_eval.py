@@ -75,10 +75,11 @@ def run_case(case, model, data_dir, code_timeout):
     """Goi model cho mot case va cham. Tra ve ban ghi. Nem lai LLMChainExhausted (khong phai json_invalid)
     va LLMRequestError de vong ngoai dung."""
     t0 = time.perf_counter()
-    text, out, error = None, None, None
+    text, out, error, finish_reason = None, None, None, None
     try:
         r = llm.ask_one_model(build_messages(case), case.role, model, json_schema=SCHEMAS[case.role], use_cache=False)
         text, out = r.text, r.data
+        finish_reason = r.finish_reason  # llm/ chi tra finish_reason cua lan goi cuoi (khong co theo tung lan)
         usage = {"prompt_tokens": r.prompt_tokens, "completion_tokens": r.completion_tokens,
                  "network_calls": r.network_calls, "json_retries": r.json_retries}
         latency = r.latency_s
@@ -107,6 +108,7 @@ def run_case(case, model, data_dir, code_timeout):
         "json_retries": usage.get("json_retries"),
         "latency_s": latency,
         "answer_head": (text or "")[:ANSWER_HEAD],
+        "finish_reason": finish_reason,
         **details,
     }
 
