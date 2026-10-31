@@ -12,8 +12,8 @@ Cập nhật: 31/10/2026. Nguồn: git log, code trong repo, tóm tắt cuối n
 | 4 | Xong | `profiling/` (quality, dictionary, flags, relationships, data_summary), `validators/`, khoảng hợp lệ trong dictionary; `tests.grade_bai0b` đạt 5/5 lỗi cài sẵn. 476 test pass. |
 | 5 | Xong | Runner, skill phân tích, meta_grader, `analysis.loop`, fit_prompt, bộ kiểm định theo skill thật; chốt chuỗi analysis. Bài 0a ĐẠT toàn bộ; bài 1 chạy trọn 4 câu, số liệu đúng, phán đoán BI chưa đạt. 645 test pass. |
 | 6 | Xong | Điều phối theo pha, chạy tiếp được, `--fake` tách hồ sơ, điểm dừng xác nhận, decision pending và superseded, cờ chất lượng thành decision, `context_builder`, đồng bộ hồ sơ lên R2, 5 quy tắc chung trong prompt, `tests.grade <bài>`. Bài 2 chạy thật: số tổng hợp khớp, phán đoán BI chưa đạt. 858 test pass. |
-| 7 | Đang làm | Kiểm định report, chốt chuỗi report. Mục 1: pha synthesize (`report/`, `skills/report/`), mới kiểm bằng FakeLLM. `slides/` mới có `__init__.py`. |
-| 8 | Chưa | Phạm vi chưa xác nhận. Xem "Lưu ý Ngày 8". |
+| 7 | Xong phần code | Kiểm định report; pha synthesize; `output_path` đủ file bảng; biểu đồ, Word, hồ sơ bài toán, dàn ý slide, `--build-report`. Mới kiểm bằng FakeLLM, chưa chạy thật sau phần A trở đi. `slides/` mới có `__init__.py`. |
+| 8 | Chưa | Bỏ chạy container và bài 1. Xem "Lưu ý Ngày 8". |
 
 ## Ngày 5
 
@@ -292,6 +292,33 @@ Giới hạn của mục 1:
 - Đồng bộ R2 không xóa: `insights.json` cũ trên R2 còn đó tới khi có bản mới ghi đè.
 - Hồ sơ `bai2` đang `done`, chưa có `insights.json`, muốn tổng hợp phải `--restart` hoặc sửa tay `state.json`.
 
+Phần A, file bảng của kết quả:
+- `RunResult.files_written`: mọi file lần chạy ghi, kể cả ghi lại y hệt (so `mtime` với bản chép, `copytree` giữ `mtime`).
+  `files_created` giữ nghĩa cũ (đổi nội dung, dùng để chép về). `output_path` lấy từ `files_written`.
+- `report/tables.py`: `result_tables(ledger, result_id)` trả path, name, columns, rows, là cách duy nhất lấy bảng. Phần đọc
+  `run_log` nằm trong đó, chỉ để đọc hồ sơ cũ.
+- Điểm dừng: nhập sai hoặc góp ý rỗng thì hỏi lại, chỉ n mới dừng; áp cho cả `confirm` (y/n), vì gõ nhầm ở "Chấp nhận kết
+  luận?" trước đây làm mất bản tổng hợp. Giữ một ngoại lệ: pha hiểu đề, "Gõ chỉnh sửa (để trống để dừng)" vẫn dừng khi để trống.
+
+Phần B, biểu đồ (`report/charts.py`):
+- Insight thêm `table`, `chart`, gốc thêm `column_labels`; `validate_visuals` kiểm, sai thì gửi lại AI. Hai schema để trường
+  rộng để lỗi đi qua danh sách lỗi thay vì lỗi schema.
+- x (cùng series) phải duy nhất từng dòng: code không tự cộng gộp, vì cộng cột tỷ lệ ra số sai.
+- Biểu đồ đường giữ đủ điểm, không lấy top 15: lấy top sẽ phá thứ tự thời gian.
+- stacked_bar quá 8 dải thì gộp vào "Khác" màu xám. Nhóm dài hoặc nhiều nhóm thì vẽ cột ngang.
+
+Phần C, D, E, F, G:
+- `report/docx_builder.py`, `report/build.py`, `report/slides_outline.py`. Mọi chuỗi đưa vào Word, `ho_so_<bài>.md`,
+  `slides_outline.json` đều qua `ctx.mask`: `text_filled` điền giá trị thật nên có thể chứa giá trị cột che.
+- Báo cáo dựng SAU khi state là done: lỗi dựng báo cáo không làm mất kết luận đã chấp nhận, sửa rồi `--build-report`.
+- `--restart`, `--resynthesize`, trả lời n: `report/` cũ sang `_superseded/report_<thời điểm>/` cùng `insights.json`.
+- Cột số có từ year, nam, id, code, ma, key trong tên in nguyên, không ngăn nghìn (`REPORT_PLAIN_NUMBER_HINTS`).
+- Tóm tắt cắt ở cuối câu, tối đa `REPORT_SUMMARY_MAX_CHARS` ký tự.
+- Dockerfile thêm `COPY templates/`; `tests/test_dockerfile.py` đối chiếu thư mục mã nguồn. Chưa build.
+- `validate_synthesis` cấm mọi mã R/Q/I/D kèm số; chú thích bảng và mục 6 của Word giữ mã. Decision "chấp nhận R.. dù có cờ"
+  chuyển từ mục 5 sang mục 6 vì chứa mã.
+- Trang bìa bỏ "Tên bài"; "Người lập" từ `REPORT_AUTHOR` (tùy chọn), không có thì bỏ dòng.
+
 ## Quyết định đã chốt
 - Prompt analysis trong `skills/analysis/` là nguồn duy nhất cho cả bộ kiểm định lẫn agent: kiểm định đo đúng
   prompt sẽ dùng thật.
@@ -319,20 +346,17 @@ Giới hạn của mục 1:
 ## Lưu ý Ngày 8
 - Thêm thẻ `(SENSITIVE)` cho `CUSTOMER.customer_id` trong dictionary `bai1`, `bai2` trên R2, rồi bỏ
   `ANALYSIS_DEFAULT_SENSITIVE`.
-- `docker build` chưa chạy lại sau Ngày 6.
-- `LLM_CONFIG_PATH` kiểu Windows không dùng được trong container.
+- Ngày 8 bỏ chạy container và bài 1.
 - R2 `output/<bài>/work/` còn file cũ của lần chạy trước `--restart` (đồng bộ không xóa): cần xử lý nếu tải hồ sơ từ R2 về.
 - Manifest đồng bộ chỉ ở máy này: máy khác hoặc container mới sẽ tải lại toàn bộ; object bị xóa tay trên R2 không được tải
   lại cho tới khi file đổi.
 - Chạy lại kiểm định analysis vì prompt đã đổi.
-- Hồ sơ thật `bai0a` đang có state demo cũ ở phase `loop` (`problem.json` cũng là bản demo, kèm open_item O2 "hết hạn mức"
-  sinh ra từ báo sai): chạy thật phải dùng `python main.py bai0a --restart`.
+- Hồ sơ thật `bai0a`, `bai2` tạo trước phần A: `output_path` còn thiếu file (đã bù bằng `run_log` trong `result_tables`).
 
 ## Backlog
-- `output_path` của kết quả thiếu file do lần thử hỏng đã ghi y hệt; pha synthesize đã bù bằng `run_log`, nhưng
-  `tests.grade` và các nơi đọc `output_path` khác vẫn thấy thiếu.
 - `validate_synthesis` không chặn được số viết bằng chữ.
-- `validate_synthesis` không chặn `Q<số>` dùng với nghĩa quý: dạng đó trùng mã định danh của câu hỏi.
+- Quý viết dạng `Q<số>` trong bảng hoặc tên cột: văn bản đã bị chặn (coi là mã nội bộ, kể cả khi nghĩa là quý), AI phải viết
+  bằng lời hoặc dùng placeholder.
 - `data_profile.json` chứa dòng mẫu thô, kể cả cột che, và được đồng bộ lên `output/` của bucket: cần bỏ trước khi dùng dữ
   liệu công ty hoặc chia sẻ output.
 - `runner.OUTPUT_DIR` và `quality.OUTPUT_DIR` đang đổi tạm biến toàn cục cho `--fake`; nên truyền tham số.

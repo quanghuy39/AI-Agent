@@ -31,14 +31,14 @@ Trả về JSON gồm:
   table {file, columns: tối đa sáu cột}; chart {type: bar | line | stacked_bar, file, x, y: một tới bốn cột số, series: cột
   nhóm chỉ cho stacked_bar, title: không có chữ số}. x (cùng series) không được trùng giữa các dòng.
 - conclusion: kết luận theo đúng câu hỏi của đề.
-- limitations: hạn chế của phân tích, gồm các decision và cờ chất lượng ảnh hưởng tới kết luận.
+- limitations: hạn chế của phân tích, gồm các decision và cờ chất lượng ảnh hưởng tới kết luận, viết bằng lời.
 - column_labels: {tên cột: nhãn tiếng Việt cho người đọc} của mọi cột dùng trong table, chart.
 
 # Quy tắc bắt buộc
 1. Mọi con số phải viết bằng placeholder {{Rx.field}}: x là id kết quả, field là khóa có thật trong result_summary của
    kết quả đó, viết đúng nguyên văn. Code sẽ điền số. Giá trị chuỗi trong result_summary cũng dùng placeholder.
-2. Không tự gõ chữ số ở bất kỳ đâu, kể cả năm, tháng, số thứ tự, số đếm. Chỉ được viết mã định danh dạng R<số>, Q<số>,
-   I<số>, D<số>. Cần nhắc tới đại lượng không có trong result_summary thì mô tả bằng lời, không nêu số.
+2. Văn bản gửi lãnh đạo: ngoài placeholder không có chữ số nào, kể cả năm, tháng, số thứ tự, số đếm, và không có mã nội bộ
+   (R, Q, I, D kèm số). Cần nhắc tới đại lượng không có trong result_summary thì mô tả bằng lời, không nêu số.
 3. Không tự tính: không nhân 100, không cộng, trừ, chia, so sánh chênh lệch thành số mới.
 4. Chỉ viết dấu % ngay sau placeholder có tên trường chứa pct hoặc percent. Trường là tỷ lệ dạng thập phân (rate, ratio,
    share) thì viết placeholder không kèm %.
@@ -48,9 +48,9 @@ Trả về JSON gồm:
 6. Mỗi yêu cầu có ít nhất một insight. Yêu cầu không trả lời được thì vẫn viết insight, nói rõ là chưa trả lời được và lý
    do; khi đó result_ids có thể rỗng.
 7. Không khẳng định điều kết quả không cho thấy. Kết quả có cờ trong Data quality flags thì nói rõ là cần thận trọng.
-8. Câu trả lời của yêu cầu là bảng nhiều dòng (phần tables của Results: tên file và cột, không có giá trị dòng): nói rõ chi
-   tiết nằm ở bảng của kết quả đó (ví dụ "bảng của R2") và nêu điểm nổi bật bằng placeholder có sẵn. Không mô tả quy trình
-   chung chung. Không có kết quả nào chứa dữ liệu cho yêu cầu thì nói rõ là chưa trả lời được.
+8. Câu trả lời của yêu cầu là bảng nhiều dòng (phần tables của Results: tên file và cột, không có giá trị dòng): gắn table
+   hoặc chart vào insight, viết "bảng dưới đây" hoặc "biểu đồ dưới đây" và nêu điểm nổi bật bằng placeholder có sẵn. Không mô
+   tả quy trình chung chung. Không có kết quả nào chứa dữ liệu cho yêu cầu thì nói rõ là chưa trả lời được.
 9. Không đưa khuyến nghị hay việc cần làm tiếp nếu không có kết quả làm căn cứ.
 
-Ngôn ngữ: viết tiếng Việt. Giữ nguyên tên bảng, cột, mã định danh.
+Ngôn ngữ: viết tiếng Việt. Giữ nguyên tên bảng, cột.

@@ -289,7 +289,7 @@ def test_input_dir_has_no_answers(env):
 def test_infinite_loop_times_out(env):
     r = rc.run_code("while True:\n    pass\n", TASK, "loop", timeout=2)
     assert r.timed_out and not r.ok and r.returncode is None
-    assert 2 <= r.duration_sec < 30
+    assert 1.9 <= r.duration_sec < 30  # dong ho Windows lam tron, co the do duoc 1,995 giay
 
 
 @pytest.mark.parametrize("code, why", [

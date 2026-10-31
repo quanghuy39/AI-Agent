@@ -173,6 +173,11 @@ def get_r2_settings():
     return {name: get_env(name) for name in R2_VARS}
 
 
+def report_author():
+    """REPORT_AUTHOR trong .env, tuy chon (khong co trong danh sach kiem tra o duoi): khong co thi bia khong in dong nay."""
+    return (os.getenv("REPORT_AUTHOR") or "").strip()
+
+
 def get_llm_key(name):
     """Lay khoa API cua mot hang LLM (dung o Ngay 2)."""
     return get_env(name)

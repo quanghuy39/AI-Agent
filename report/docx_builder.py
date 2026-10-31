@@ -19,6 +19,7 @@ from docx.shared import Cm, Pt, RGBColor
 from pandas.api.types import is_bool_dtype, is_numeric_dtype
 
 import config
+from analysis.loop import ACCEPT_FLAGS_KEY
 from ledger import DecisionStatus, ResultStatus
 from profiling import flags as fl
 from profiling import quality
@@ -271,13 +272,14 @@ def _shorten(text, limit):
     return cut[:end + 1] if end > 0 else cut.rstrip() + "…"
 
 
-def _cover(doc, title, task, mask, today):
+def _cover(doc, title, mask, today):
     for _ in range(5):
         doc.add_paragraph()
     doc.add_paragraph(mask(title), style="Title")
     doc.add_paragraph(f"Ngày lập: {today.strftime('%d/%m/%Y')}")
-    doc.add_paragraph("Người lập: ")
-    doc.add_paragraph(f"Tên bài: {task}")
+    author = config.report_author()
+    if author:
+        doc.add_paragraph(f"Người lập: {author}")
     _page_break(doc)
 
 
@@ -300,6 +302,11 @@ def _results(rep):
                 rep.figure(ins)
 
 
+def _names_result(decision):
+    """Decision "chap nhan R.. du co co": co ma ket qua nen chi hien o muc 6, muc giu ma de truy vet."""
+    return (decision.source_key or "").startswith(ACCEPT_FLAGS_KEY)
+
+
 def _data_section(rep, profile):
     rep.heading("5.1. Nguồn dữ liệu", 2)
     rows = [[name, format_value(t["n_rows"]), format_value(t["n_cols"])] for name, t in (profile.get("tables") or {}).items()]
@@ -310,7 +317,7 @@ def _data_section(rep, profile):
         rep.text("Không có thông tin bảng nguồn.")
     rep.heading("5.2. Chất lượng dữ liệu", 2)
     handled = [d.text for d in rep.ledger.active_decisions()
-               if d.status == DecisionStatus.CONFIRMED and d.kind.value == ANOMALY]
+               if d.status == DecisionStatus.CONFIRMED and d.kind.value == ANOMALY and not _names_result(d)]
     notes = [f["message"] for f in fl.all_flags(profile) if f["severity"] == fl.INFO]
     if handled or notes:
         rep.bullets(handled + notes)
@@ -324,7 +331,8 @@ def _method_section(rep):
     rep.bullets(f"{r.id}: {r.question} Phương pháp: {r.method}" for r in valid)
     rep.heading("6.2. Giả định đã xác nhận", 2)
     assumptions = [d.text for d in rep.ledger.active_decisions()
-                   if d.status == DecisionStatus.CONFIRMED and d.kind.value != ANOMALY and d.source_key != CONCLUSION_KEY]
+                   if d.status == DecisionStatus.CONFIRMED and d.source_key != CONCLUSION_KEY
+                   and (d.kind.value != ANOMALY or _names_result(d))]
     if assumptions:
         rep.bullets(assumptions)
     else:
@@ -347,7 +355,7 @@ def build_document(record, ledger, charts, task, profile, mask=str, today=None):
     _setup_styles(doc)
     _setup_page(doc, mask(title))
     _update_fields_on_open(doc)
-    _cover(doc, title, task, mask, today or date.today())
+    _cover(doc, title, mask, today or date.today())
     _contents(doc)
 
     rep = _Report(doc, record, ledger, charts, mask)

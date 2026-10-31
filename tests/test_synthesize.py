@@ -35,11 +35,11 @@ REQUIREMENTS = ["Tổng doanh thu", "Tỷ lệ rời bỏ"]
 PROBLEM = {"problem": "Đề gốc: tính doanh thu và tỷ lệ rời bỏ.", "requirements": REQUIREMENTS}
 PASS = [{"name": "c", "status": "pass"}]
 GOOD = {"summary": "Doanh thu đạt {{R1.total}}.",
-        "insights": [{"id": "I1", "requirement": 1, "text": "Tổng doanh thu là {{R1.total}} (Q1, D1).",
+        "insights": [{"id": "I1", "requirement": 1, "text": "Tổng doanh thu là {{R1.total}}.",
                       "result_ids": ["R1"]},
                      {"id": "I2", "requirement": 2, "text": "Tỷ lệ rời bỏ {{R2.churn_pct}}%, nhóm {{R2.top}}.",
                       "result_ids": ["R2"]}],
-        "conclusion": "Nên giữ nhóm {{R2.top}}.", "limitations": "Theo D1, chưa kiểm định."}
+        "conclusion": "Nên giữ nhóm {{R2.top}}.", "limitations": "Chưa kiểm định thống kê."}
 
 
 @pytest.fixture
@@ -149,10 +149,29 @@ def test_c_typed_number_in_insight(led):
     assert errors_of(led, with_insight(text="{{R1.total}} tăng 5"))[0].startswith("I1: có chữ số tự gõ (5)")
 
 
-def test_c_identifiers_allowed_others_not(led):
-    assert errors_of(led, with_insight(text="Xem R1, Q2, I3, D4.")) == []
+@pytest.mark.parametrize("code", ["R1", "Q2", "I3", "D4"])
+def test_c_internal_code_rejected_in_insight(led, code):
+    errors = errors_of(led, with_insight(text=f"Xem {code} ở trên."))
+    assert errors == [f"I1: có mã nội bộ ({code}); viết bằng lời, không dẫn mã trong văn bản."]
+
+
+@pytest.mark.parametrize("field", ["summary", "conclusion", "limitations"])
+def test_c_internal_code_rejected_in_free_text(led, field):
+    assert any("có mã nội bộ (D1)" in e for e in errors_of(led, output(**{field: "Theo D1."})))
+
+
+def test_c_table_code_rejected_natural_phrase_allowed(led):
+    assert errors_of(led, with_insight(text="Chi tiết ở bảng của R1."))
+    assert errors_of(led, with_insight(text="Chi tiết ở bảng dưới đây.")) == []
+
+
+def test_c_digits_other_than_codes_rejected(led):
     assert "có chữ số tự gõ" in errors_of(led, with_insight(text="Xem B5."))[0]
     assert "có chữ số tự gõ" in errors_of(led, with_insight(text="Xem R1a2."))[0]
+
+
+def test_placeholder_is_not_an_internal_code(led):
+    assert errors_of(led, with_insight(text="{{R1.total}} đồng.")) == []
 
 
 def test_d_requirement_without_insight(led):
@@ -257,7 +276,7 @@ def test_success_writes_insights_with_label_and_filled_text(led):
     record, fake = run([GOOD], led)
     assert led.get_insights() == record
     first, second = record["insights"]
-    assert first["text_filled"] == "Tổng doanh thu là 1.234.567,89 (Q1, D1)." and first["text"] == GOOD["insights"][0]["text"]
+    assert first["text_filled"] == "Tổng doanh thu là 1.234.567,89." and first["text"] == GOOD["insights"][0]["text"]
     assert second["text_filled"] == "Tỷ lệ rời bỏ 26,96%, nhóm Value."
     assert first["label"] == VERIFIED and first["chart"] is None
     assert record["summary_filled"] == "Doanh thu đạt 1.234.567,89." and record["conclusion_filled"] == "Nên giữ nhóm Value."
@@ -370,7 +389,7 @@ def test_prompt_is_generic():
 
 def test_prompt_states_placeholder_rules():
     text = load_prompt("synthesize")
-    assert "{{Rx.field}}" in text and "pct hoặc percent" in text and "Không tự gõ chữ số" in text
+    assert "{{Rx.field}}" in text and "pct hoặc percent" in text and "không có chữ số nào" in text
 
 
 def big_ledger(tmp_path):
@@ -501,5 +520,6 @@ def test_cut_results_keep_file_name_and_summary(led):
 
 def test_prompt_states_table_and_recommendation_rules():
     text = load_prompt("synthesize")
-    assert "bảng của R2" in text and "Không mô tả quy trình" in text
+    assert "bảng dưới đây" in text and "biểu đồ dưới đây" in text and "bảng của R" not in text
+    assert "mã nội bộ" in text and "Không mô" in text and "viết bằng lời" in text
     assert "Không đưa khuyến nghị" in text and "việc nên làm" not in text and "chưa trả lời được" in text

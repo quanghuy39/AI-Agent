@@ -829,7 +829,7 @@ def demo_synthesis(messages):
     first = re.search(r"^(R\d+) \|.*\| result_summary: (\{.*\}) \|", prompt, re.M)
     rid = first[1] if first else None
     keys = list(json.loads(first[2])) if first else []
-    text = f"Demo: kết quả {rid} ghi nhận {{{{{rid}.{keys[0]}}}}}." if keys else "Demo: chưa trả lời được, không có số."
+    text = f"Demo: ghi nhận {{{{{rid}.{keys[0]}}}}}." if keys else "Demo: chưa trả lời được, không có số."
     insights = [{"id": f"I{i}", "requirement": int(n), "text": text, "result_ids": [rid] if rid else []}
                 for i, n in enumerate(re.findall(r"^\[(\d+)\] ", prompt, re.M), 1)]
     if DEMO_TABLE in prompt and insights:  # bang cua demo_fake: co cot so that de ve va dua vao bao cao

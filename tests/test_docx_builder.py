@@ -80,12 +80,46 @@ def test_requirements_are_subsections_in_order(led):
     assert h2[2:] == ["5.1. Nguồn dữ liệu", "5.2. Chất lượng dữ liệu", "6.1. Phương pháp", "6.2. Giả định đã xác nhận"]
 
 
-def test_cover_has_title_date_author_task_then_toc(led):
+def test_cover_has_title_date_author_then_toc(led, monkeypatch):
+    monkeypatch.setenv("REPORT_AUTHOR", "Nguyễn Văn A")
     doc = built(led)
     texts = [p.text for p in doc.paragraphs]
     assert styled(doc, "Title") == ["Cơ cấu sản phẩm theo nhóm"]
-    assert any(t.startswith("Ngày lập: ") for t in texts) and "Người lập: " in texts and f"Tên bài: {TASK}" in texts
-    assert texts.index(f"Tên bài: {TASK}") < texts.index("Mục lục") < texts.index(HEADINGS[0])
+    assert any(t.startswith("Ngày lập: ") for t in texts)
+    assert texts.index("Người lập: Nguyễn Văn A") < texts.index("Mục lục") < texts.index(HEADINGS[0])
+
+
+def test_cover_has_no_task_name(led):
+    assert not any("Tên bài" in p.text or TASK in p.text for p in built(led).paragraphs)
+
+
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_cover_without_author_has_no_line(led, monkeypatch, value):
+    monkeypatch.delenv("REPORT_AUTHOR", raising=False)
+    if value is not None:
+        monkeypatch.setenv("REPORT_AUTHOR", value)
+    assert not any("Người lập" in p.text for p in built(led).paragraphs)
+
+
+def test_report_author_is_optional_setting():
+    assert "REPORT_AUTHOR" not in config.R2_VARS + config.LLM_KEY_VARS + config.OTHER_VARS
+    assert "REPORT_AUTHOR=" in (config.ROOT / ".env.example").read_text(encoding="utf-8")
+
+
+def test_accept_flag_decision_only_in_section_six(led):
+    d = led.add_decision("anomaly_handling", "chấp nhận R1 dù có cờ join", source_key="accept_flags|R1")
+    led.confirm_decision(d.id)
+    doc = built(led)
+    texts = [(p.style.name, p.text) for p in doc.paragraphs]
+    assert ("List Bullet", d.text) in texts
+    order = [t for _, t in texts]
+    assert order.index(d.text) > order.index("6.2. Giả định đã xác nhận")
+
+
+def test_internal_codes_kept_for_tracing(led):
+    doc = built(led)
+    assert "(kết quả R1)" in styled(doc, "Caption")[0]
+    assert any(t.startswith("R1: ") for t in styled(doc, "List Bullet"))
 
 
 def test_toc_field_and_update_on_open(led):

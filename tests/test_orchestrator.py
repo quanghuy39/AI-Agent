@@ -430,7 +430,7 @@ def test_done_has_insights_and_confirmed_conclusion(env, capsys):
     assert [d.status.value for d in conclusion(env)] == ["confirmed"]
     assert synthesis_events(env, "confirm_conclusion")[-1].status == "ok"
     out = capsys.readouterr().out
-    assert "Yêu cầu 1: Số sản phẩm" in out and "I2 [verified] Demo: kết quả R1 ghi nhận 6. (R1)" in out
+    assert "Yêu cầu 1: Số sản phẩm" in out and "I2 [verified] Demo: ghi nhận 6. (R1)" in out
 
 
 def test_conclusion_is_asked_even_without_flags(env):

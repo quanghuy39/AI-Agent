@@ -33,7 +33,9 @@ Trạng thái từng ngày: xem `PROGRESS.md`.
   chỉ gọi sang `main.py`), `meta_grader.py`.
 - `skills/analysis/` – `understand.md`, `plan.md`, `step.md`, `contract.md` (prompt), `schemas.py` (ProblemRestatement,
   AnalysisPlan, AnalysisStep, AgentMeta), `__init__.py` (load_prompt, render_prompt).
-- `report/` – `placeholders.py` (điền số, định dạng, `validate_synthesis`, nhãn), `synthesize.py` (pha tổng hợp).
+- `report/` – `placeholders.py` (điền số, định dạng, `validate_synthesis`, nhãn), `synthesize.py` (pha tổng hợp),
+  `tables.py` (`result_tables`: cách duy nhất lấy file bảng của kết quả), `charts.py` (biểu đồ, `validate_visuals`),
+  `docx_builder.py` (Word), `slides_outline.py`, `build.py` (dựng cả bộ vào `output/<bài>/report/`).
 - `skills/report/` – `synthesize.md` (prompt), `schemas.py` (SynthesisOutput, Insight, nội dung `insights.json`),
   `__init__.py` (load_prompt, render_prompt).
 - `slides/` – mới có `__init__.py` (chưa làm).
@@ -54,6 +56,7 @@ python -m profiling.data_summary bai1 [--sensitive BANG.cot] [--max-chars N] [--
 python -m runner.run_code bai1 path\to\code.py [--step TEN] [--timeout GIAY]
 python main.py bai1 [--sensitive BANG.cot] [--restart] [--yes] [--fake] [--no-sync]   # chạy một bài, tiếp từ pha đang dở
 python main.py bai1 --resynthesize [--yes] [--fake] [--no-sync]   # chỉ chạy lại pha synthesize (state synthesize hoặc done)
+python main.py bai1 --build-report [--fake] [--no-sync]   # dựng lại biểu đồ, Word, hồ sơ, dàn ý từ insights.json, không gọi AI (state done)
 python -m analysis.loop bai1 [--sensitive BANG.cot] [--use-fake] [--max-retries 3] [--yes] [--no-sync]   # cùng luồng main.py
 python -m storage.sync bai1 [--dry-run]               # đồng bộ hồ sơ lên R2; --dry-run chỉ in số file, không ghi gì
 python -m tests.grade_bai0b                           # chấm profiling bài 0b bằng answers/ (quyền grader)
@@ -74,6 +77,8 @@ và mọi decision thành superseded (giữ trong file, không dùng lại, hỏ
 lập lại, tối đa `ANALYSIS_PLAN_MAX_RETRIES` lần; decision kế hoạch mới không còn thì superseded).
 `--resynthesize`: `insights.json` sang `_superseded/`, decision chấp nhận kết luận thành superseded rồi hỏi lại, kết quả và
 decision khác giữ nguyên; pha sớm hơn thì từ chối, mã 3; không dùng cùng `--restart`, `--sensitive`.
+Báo cáo dựng sau khi chấp nhận kết luận, ở `output/<bài>/report/`: `bao_cao_<bài>.docx`, `ho_so_<bài>.md`, `slides_outline.json`,
+`charts/<insight>.png`; lỗi dựng báo cáo không đổi state done, sửa rồi `--build-report`. `REPORT_AUTHOR` trong `.env` là tùy chọn.
 Đồng bộ R2 (trừ `--fake`, `--no-sync`): trước mỗi câu hỏi xác nhận, khi xong và khi thoát vì lỗi; lỗi đồng bộ chỉ cảnh
 báo một dòng, ghi sự kiện `sync` trong run_log, lần sau tải lại nhờ manifest. `run_task` gọi trực tiếp thì mặc định tắt.
 Lọc output tiếng Việt bằng `Select-String` cần `[Console]::OutputEncoding = [Text.Encoding]::UTF8`.

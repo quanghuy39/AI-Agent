@@ -14,7 +14,7 @@ from ledger import CheckStatus, ResultStatus
 
 PLACEHOLDER_RE = re.compile(r"\{\{\s*(R\d+)\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 PERCENT_RE = re.compile(PLACEHOLDER_RE.pattern + r"\s*%")
-IDENTIFIER_RE = re.compile(r"\b[RQID]\d+\b")  # ma dinh danh duoc phep co chu so
+IDENTIFIER_RE = re.compile(r"\b[RQID]\d+\b")  # ma noi bo: van ban gui lanh dao khong duoc co
 NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
 BRACE_RE = re.compile(r"[{}]")
 NO_DATA = "không có dữ liệu"  # gia tri null hoac NaN trong result_summary
@@ -108,9 +108,13 @@ def _is_percent_field(field):
 
 
 def _text_errors(where, text):
-    """Loi khong phu thuoc ket qua: chu so tu go, dau % sai cho, placeholder viet sai dang."""
+    """Loi khong phu thuoc ket qua: ma noi bo, chu so tu go, dau % sai cho, placeholder viet sai dang.
+    Ngoai placeholder khong duoc co chu so nao."""
     errors = []
     bare = PLACEHOLDER_RE.sub(" ", text)
+    codes = IDENTIFIER_RE.findall(bare)
+    if codes:
+        errors.append(f"{where}: có mã nội bộ ({', '.join(codes[:3])}); viết bằng lời, không dẫn mã trong văn bản.")
     digits = NUMBER_RE.findall(IDENTIFIER_RE.sub(" ", bare))
     if digits:
         errors.append(f"{where}: có chữ số tự gõ ({', '.join(digits[:3])}); phải dùng placeholder {{{{Rx.field}}}}.")
