@@ -288,7 +288,7 @@ BRANDS = pd.DataFrame({"group": ["A", "B", "A", "C", "B", "A"], "brand": ["P", "
 
 
 def rows_of(led, frame, **table):
-    first_column(led, frame, **table)
+    frame.to_csv(led.root / "work" / "by_group.csv", index=False)
     spec = {"file": "by_group.csv", "columns": list(frame.columns), **table}
     doc = built(led, {**RECORD, "insights": [insight(1, 1, table=spec), insight(2, 2)]})
     return [[c.text for c in r.cells] for r in doc.tables[0].rows[1:]]
@@ -369,7 +369,7 @@ def test_sort_happens_before_cut(led):
 def repeated(led, first, second):
     doc = built(led, {**RECORD, "insights": [insight(1, 1, **first), insight(2, 2, **second)]})
     notes = [p.text for p in doc.paragraphs if p.text.startswith("Xem ")]
-    return doc, notes, [t for t in styled(doc, "Caption")]
+    return doc, notes, styled(doc, "Caption")
 
 
 def test_same_table_and_chart_not_repeated(led):

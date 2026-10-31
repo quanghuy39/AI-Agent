@@ -388,17 +388,16 @@ def test_no_log_without_auto_chart(led):
 # thu tu nhom cua bar
 @pytest.fixture
 def bar_order(led, monkeypatch):
-    orders = []
-    monkeypatch.setattr(charts, "_draw_bars", lambda ax, frame, spec: orders.append(list(frame.index)) or False)
+    orders, draw = [], charts._draw_bars
+    monkeypatch.setattr(charts, "_draw_bars", lambda ax, frame, spec: orders.append(list(frame.index)) or draw(ax, frame, spec))
     return orders
 
 
 def bars_of(led, frame, orders, table=None, **chart):
     frame.to_csv(led.root / "work" / "a.csv", index=False)
+    led.add_result("B", "m", {}, PASS, output_path="work/a.csv")
     ins = {"id": "I1", "result_ids": [f"R{len(led.results())}"], "table": table,
            "chart": {**CHART, "file": "a.csv", "x": frame.columns[0], "y": [frame.columns[1]], **chart}}
-    led.add_result("B", "m", {}, PASS, output_path="work/a.csv")
-    ins["result_ids"] = [f"R{len(led.results())}"]
     draw_charts({"insights": [ins]}, led)
     return orders[-1]
 
