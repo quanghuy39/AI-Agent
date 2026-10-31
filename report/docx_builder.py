@@ -21,9 +21,10 @@ import config
 from analysis.loop import ACCEPT_FLAGS_KEY
 from ledger import DecisionStatus, ResultStatus
 from profiling import flags as fl
-from report.charts import _label, tables_of
+from report.charts import _label, chart_title, tables_of
 from report.placeholders import HYPOTHESIS, VERIFIED, format_value
 from report.tables import is_measure, is_time_column, label_column, load_table
+from skills.report.schemas import ChartSpec
 
 # decision chap nhan ket luan: co dinh, moi lan tu choi roi tong hop lai dung chung; khong phai gia dinh phan tich
 CONCLUSION_KEY = "accept_conclusion|synthesize"
@@ -259,7 +260,7 @@ class _Report:
         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
         paragraph.paragraph_format.keep_with_next = True
         paragraph.add_run().add_picture(str(path), width=Cm(config.REPORT_PICTURE_CM))
-        self._caption(f"Hình {self.n_figures}: {ins['chart']['title']}", False)
+        self._caption(f"Hình {self.n_figures}: {chart_title(ChartSpec.model_validate(ins['chart']), self.labels)}", False)
 
 
 def report_title(problem, fallback):

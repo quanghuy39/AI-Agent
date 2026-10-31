@@ -333,6 +333,8 @@ Sau lần chạy thật `bai0a` (số liệu đúng, đã xem Word):
 - `--restart`, `--resynthesize`, `--build-report` thử mở ghi từng file trong `report/` trước mọi thao tác ghi; có file bị khóa thì
   dừng, mã 3, không đổi gì. `discard_insights` đổi tên thay vì `shutil.move` (move chép rồi mới xóa, để lại bản sao dở dang) và
   chuyển `PermissionError` thành `ReportLocked`.
+- Tiêu đề biểu đồ (trong ảnh, chú thích Hình n) do `charts.chart_title` sinh từ `column_labels`. `ChartSpec.title` giữ lại cho
+  `insights.json` cũ nhưng không hiển thị, không kiểm, prompt không yêu cầu nữa.
 
 ## Quyết định đã chốt
 - Prompt analysis trong `skills/analysis/` là nguồn duy nhất cho cả bộ kiểm định lẫn agent: kiểm định đo đúng

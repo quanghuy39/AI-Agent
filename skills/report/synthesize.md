@@ -27,7 +27,7 @@ Trả về JSON gồm:
 - summary: tóm tắt ngắn toàn bài.
 - insights: mỗi nhận định có id (I1, I2, ...), requirement (số trong ngoặc vuông ở Requirements), text, result_ids (kết quả
   làm căn cứ). Tùy chọn, file lấy từ tables của kết quả trong result_ids: table {file, columns: tối đa sáu cột, sort: {by: cột số, desc}}; chart {type:
-  bar | line | stacked_bar, file, x, y: một tới bốn cột số, series: cột nhóm chỉ cho stacked_bar, title: không có chữ số}.
+  bar | line | stacked_bar, file, x, y: một tới bốn cột số, series: cột nhóm chỉ cho stacked_bar}.
   x (cùng series) không trùng giữa các dòng. Bảng không quá hai mươi dòng nên kèm chart.
 - conclusion: trả lời ngắn từng yêu cầu, không chép lại summary.
 - limitations: giới hạn thật (phạm vi dữ liệu, giả định, cờ chất lượng), viết bằng lời. Không có thì viết đúng một câu:

@@ -33,7 +33,7 @@ class ChartSpec(_Model):
     x: str
     y: list[str]
     series: str | None = None
-    title: str
+    title: str = ""  # giu cho insights.json cu; tieu de hien thi do code sinh (report.charts.chart_title)
 
 
 class Insight(_Model):

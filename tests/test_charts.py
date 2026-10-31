@@ -6,6 +6,7 @@ Chay: python -m pytest tests/test_charts.py -v
 import pandas as pd
 import pytest
 from matplotlib import font_manager
+from matplotlib.axes import Axes
 from PIL import Image
 
 import config
@@ -20,6 +21,7 @@ from report.charts import (
     _limit,
     _number,
     auto_chart,
+    chart_title,
     draw_chart,
     draw_charts,
     validate_visuals,
@@ -109,8 +111,30 @@ def test_series_needs_single_y(led):
 
 
 @pytest.mark.parametrize("title", ["Năm 2024", "", "{{R1.n}}"])
-def test_title_without_digits(led, title):
-    assert any("title phải có chữ" in e for e in chart_errors(led, title=title))
+def test_ai_title_not_checked_because_not_shown(led, title):
+    assert chart_errors(led, title=title) == []
+
+
+def test_title_optional_for_new_output_and_kept_for_old_record():
+    assert ChartSpec.model_validate({"type": "bar", "file": "a", "x": "g", "y": ["n"]}).title == ""
+    assert ChartSpec.model_validate({"type": "bar", "file": "a", "x": "g", "y": ["n"], "title": "Cũ"}).title == "Cũ"
+
+
+def test_prompt_no_longer_asks_for_title():
+    assert "title" not in load_prompt("synthesize")
+
+
+LABELS = {"n": "số sản phẩm", "m": "doanh thu", "group": "Nhóm hàng", "brand": "Thương hiệu"}
+
+
+@pytest.mark.parametrize("changes, title", [
+    ({"y": ["n"]}, "Số sản phẩm theo Nhóm hàng"),
+    ({"y": ["n", "m"], "type": "line"}, "Số sản phẩm, doanh thu theo Nhóm hàng"),
+    ({"y": ["n"], "type": "stacked_bar", "series": "brand"}, "Số sản phẩm theo Nhóm hàng và Thương hiệu"),
+    ({"y": ["khong_nhan"]}, "Khong_nhan theo Nhóm hàng"),
+])
+def test_chart_title_built_from_labels(changes, title):
+    assert chart_title(ChartSpec.model_validate({**CHART, **changes}), LABELS) == title
 
 
 def test_duplicate_x_is_rejected_not_summed(led):
@@ -192,6 +216,14 @@ def test_draws_png_200dpi_16_9(led, spec):
     with Image.open(png_of(led, spec)) as image:
         assert image.size == (2000, 1125)
         assert round(image.info["dpi"][0]) == 200
+
+
+def test_image_title_comes_from_labels_not_ai(led, monkeypatch):
+    shown = []
+    real = Axes.set_title
+    monkeypatch.setattr(Axes, "set_title", lambda self, text, **kw: shown.append(text) or real(self, text, **kw))
+    png_of(led, CHART, labels={"group": "Nhóm hàng", "total": "BIMAT tổng"}, mask=lambda s: s.replace("BIMAT", "[che]"))
+    assert shown == ["[che] tổng theo Nhóm hàng"]
 
 
 def test_draw_charts_saves_by_insight_id_and_skips_no_chart(led):
@@ -288,9 +320,8 @@ CODE_NAME = pd.DataFrame({"category_id": ["C1", "C2"], "category_name": ["Nướ
 
 
 def test_auto_chart_one_label_one_number(led):
-    chart = auto_chart(sales_table(led, "a.csv", ONE_DIM), led, {"n": "Số sản phẩm", "category_name": "Nhóm hàng"})
-    assert chart == {"type": "bar", "file": "a.csv", "x": "category_name", "y": ["n"], "series": None,
-                     "title": "Số sản phẩm theo Nhóm hàng"}
+    chart = auto_chart(sales_table(led, "a.csv", ONE_DIM), led)
+    assert chart == {"type": "bar", "file": "a.csv", "x": "category_name", "y": ["n"], "series": None}
 
 
 def test_auto_chart_code_and_name_uses_name(led):

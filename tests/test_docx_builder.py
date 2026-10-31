@@ -140,7 +140,7 @@ def test_body_text_and_labels(led):
 
 def test_captions_numbered(led):
     captions = styled(built(led), "Caption")
-    assert captions == ["Bảng 1: Nhóm hàng, year, Tổng tiền (kết quả R1)", "Hình 1: Tổng theo nhóm"]
+    assert captions == ["Bảng 1: Nhóm hàng, year, Tổng tiền (kết quả R1)", "Hình 1: Tổng tiền theo Nhóm hàng"]
 
 
 def test_sections_five_and_six_use_ledger(led):

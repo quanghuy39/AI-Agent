@@ -90,8 +90,6 @@ def _chart_shape_errors(where, spec):
         errors.append(f"{where}: series chỉ dùng cho stacked_bar.")
     if spec.series and len(spec.y) != 1:
         errors.append(f"{where}: có series thì y chỉ gồm một cột.")
-    if not spec.title.strip() or _has_digit(spec.title):
-        errors.append(f"{where}: title phải có chữ và không có chữ số.")
     return errors
 
 
@@ -170,7 +168,7 @@ def _limit(frame, spec, y_label):
 
 # ---------- bieu do du phong ----------
 
-def auto_chart(ins, ledger, labels=None, mask=str):
+def auto_chart(ins, ledger, mask=str):
     """Dac ta bar cho insight co table ma khong co chart; None neu bang khong du dieu kien: dung mot cot nhan (hoac ma +
     ten) va mot cot so, tu hai toi REPORT_AUTO_CHART_MAX_ROWS dong, nhan khong trung."""
     spec = ins.get("table")
@@ -184,9 +182,7 @@ def auto_chart(ins, ledger, labels=None, mask=str):
         return None
     if _keys(df[x], mask).duplicated().any():
         return None
-    labels = labels or {}
-    return {"type": "bar", "file": spec["file"], "x": x, "y": measures, "series": None,
-            "title": f"{labels.get(measures[0], measures[0])} theo {labels.get(x, x)}"}
+    return {"type": "bar", "file": spec["file"], "x": x, "y": measures, "series": None}
 
 
 def with_auto_charts(record, ledger, mask=str):
@@ -194,7 +190,7 @@ def with_auto_charts(record, ledger, mask=str):
     la cach trinh bay do code chon, chay lai cho ket qua nhu nhau."""
     insights = []
     for ins in record["insights"]:
-        chart = auto_chart(ins, ledger, record.get("column_labels"), mask)
+        chart = auto_chart(ins, ledger, mask)
         if chart:
             ledger.log_event("report", "auto_chart", extra={"insight": ins["id"], "file": chart["file"], "x": chart["x"],
                                                             "y": chart["y"]})
@@ -204,6 +200,15 @@ def with_auto_charts(record, ledger, mask=str):
 
 
 # ---------- ve ----------
+
+def chart_title(spec, labels=None):
+    """Tieu de trong anh va chu thich Hinh n: sinh tu column_labels, khong dung title cua AI."""
+    labels = labels or {}
+    text = f"{', '.join(labels.get(c, c) for c in spec.y)} theo {labels.get(spec.x, spec.x)}"
+    if spec.series:
+        text += f" và {labels.get(spec.series, spec.series)}"
+    return text[0].upper() + text[1:]
+
 
 def _font():
     names = {f.name for f in font_manager.fontManager.ttflist}
@@ -287,7 +292,7 @@ def draw_chart(spec, path, out_path, labels=None, mask=str, descending=False):
             horizontal = _draw_bars(ax, frame, spec)
             ax.set_xlabel(y_label if horizontal else x_label, color=MUTED)
             ax.set_ylabel(x_label if horizontal else y_label, color=MUTED)
-        ax.set_title(spec.title, loc="left", color=INK, fontsize=14, fontweight="bold")
+        ax.set_title(mask(chart_title(spec, labels)), loc="left", color=INK, fontsize=14, fontweight="bold")
         if frame.shape[1] > 1:
             fig.legend(loc="outside right upper", frameon=False, labelcolor=MUTED, fontsize=9)
         if note:
