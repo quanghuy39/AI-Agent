@@ -202,6 +202,52 @@ def test_percent_only_after_percent_field(led, text, bad):
     assert any("dấu %" in e for e in errors_of(led, out)) == bad
 
 
+# conclusion, limitations
+def test_conclusion_copying_summary_rejected(led):
+    summary = "Doanh thu đạt {{R1.total}}, nhóm dẫn đầu là {{R2.top}} trong toàn bộ dữ liệu."
+    errors = errors_of(led, output(summary=summary, conclusion=summary.upper().replace("  ", " ")))
+    assert "conclusion: gần như chép lại summary; trả lời ngắn từng yêu cầu." in errors
+
+
+def test_conclusion_slightly_changed_copy_rejected(led):
+    summary = "Doanh thu đạt {{R1.total}}, nhóm dẫn đầu là {{R2.top}} trong toàn bộ dữ liệu."
+    errors = errors_of(led, output(summary=summary, conclusion=summary.replace("dẫn đầu", "đứng đầu")))
+    assert any("chép lại summary" in e for e in errors)
+
+
+def test_different_conclusion_accepted(led):
+    summary = "Doanh thu đạt {{R1.total}}, nhóm dẫn đầu là {{R2.top}} trong toàn bộ dữ liệu."
+    conclusion = "Yêu cầu về doanh thu đã trả lời bằng {{R1.total}}; yêu cầu về rời bỏ cho thấy nhóm {{R2.top}}."
+    assert errors_of(led, output(summary=summary, conclusion=conclusion)) == []
+
+
+def test_similarity_error_goes_back_to_ai(led):
+    same = {**GOOD, "conclusion": GOOD["summary"]}
+    record, fake = run([same, GOOD], led)
+    assert len(fake.calls) == 2 and "chép lại summary" in fake.calls[1]["messages"][0]["content"]
+    assert record["conclusion_filled"] == "Nên giữ nhóm Value."
+
+
+def test_no_limitations_sentence_allowed_despite_digit(led):
+    assert errors_of(led, output(limitations=config.REPORT_NO_LIMITATIONS)) == []
+    assert errors_of(led, output(limitations=f"  {config.REPORT_NO_LIMITATIONS}\n")) == []
+
+
+def test_other_text_with_section_number_still_rejected(led):
+    errors = errors_of(led, output(limitations="Có giới hạn, xem mục 6."))
+    assert any("có chữ số tự gõ (6)" in e for e in errors)
+
+
+def test_no_limitations_sentence_only_for_limitations(led):
+    assert any("có chữ số tự gõ" in e for e in errors_of(led, output(conclusion=config.REPORT_NO_LIMITATIONS)))
+
+
+def test_prompt_rules_for_conclusion_limitations_and_judgement_words():
+    text = " ".join(load_prompt("synthesize").split())  # prompt xuong dong giua cau
+    assert config.REPORT_NO_LIMITATIONS in text and "không chép lại summary" in text
+    assert "trả lời ngắn từng yêu cầu" in text and "chênh lệch lớn" in text and "căn cứ trực tiếp" in text
+
+
 def test_requirements_fall_back_to_goals():
     assert requirements_of({"requirements": [], "restatement": {"goals": ["a"]}}) == ["a"]
     assert requirements_of({"requirements": ["b"], "restatement": {"goals": ["a"]}}) == ["b"]

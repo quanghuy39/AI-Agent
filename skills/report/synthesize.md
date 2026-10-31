@@ -29,8 +29,9 @@ Trả về JSON gồm:
   làm căn cứ). Tùy chọn, file lấy từ tables của kết quả trong result_ids: table {file, columns: tối đa sáu cột, sort: {by: cột số, desc}}; chart {type:
   bar | line | stacked_bar, file, x, y: một tới bốn cột số, series: cột nhóm chỉ cho stacked_bar, title: không có chữ số}.
   x (cùng series) không trùng giữa các dòng. Bảng không quá hai mươi dòng nên kèm chart.
-- conclusion: kết luận theo đúng câu hỏi của đề.
-- limitations: hạn chế của phân tích, gồm các decision và cờ chất lượng ảnh hưởng tới kết luận, viết bằng lời.
+- conclusion: trả lời ngắn từng yêu cầu, không chép lại summary.
+- limitations: giới hạn thật (phạm vi dữ liệu, giả định, cờ chất lượng), viết bằng lời. Không có thì viết đúng một câu:
+  Không có hạn chế đáng kể ngoài các giả định ở mục 6.
 - column_labels: {tên cột: nhãn tiếng Việt} của mọi cột dùng trong table, chart.
 
 # Quy tắc bắt buộc
@@ -47,5 +48,7 @@ Trả về JSON gồm:
 8. Yêu cầu trả lời bằng bảng nhiều dòng (tables trong Results: tên file và cột, không có giá trị dòng): gắn table hoặc chart,
    viết "bảng dưới đây" hoặc "biểu đồ dưới đây", nêu điểm nổi bật bằng placeholder. Không mô tả quy trình chung chung.
 9. Không đưa khuyến nghị hay việc cần làm tiếp nếu không có kết quả làm căn cứ.
+10. Không dùng từ đánh giá phân bố hoặc mức độ (đều, chênh lệch lớn, tập trung, vượt trội...) trừ khi có placeholder làm căn
+    cứ trực tiếp.
 
 Ngôn ngữ: viết tiếng Việt. Giữ nguyên tên bảng, cột.

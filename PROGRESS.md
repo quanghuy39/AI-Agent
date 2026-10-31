@@ -319,6 +319,18 @@ Phần C, D, E, F, G:
   chuyển từ mục 5 sang mục 6 vì chứa mã.
 - Trang bìa bỏ "Tên bài"; "Người lập" từ `REPORT_AUTHOR` (tùy chọn), không có thì bỏ dòng.
 
+Sau lần chạy thật `bai0a` (số liệu đúng, đã xem Word):
+- `tests/grade_bai0a.py`: dò khóa result_summary ưu tiên khớp chính xác (`numeric_keys`); thêm `product` vào mẫu `max_count`, nếu
+  không `max_total_products` không còn được tính là số nhóm lớn nhất.
+- Biểu đồ dự phòng (`charts.auto_chart`, `with_auto_charts`): insight có table, không có chart, bảng một chiều, hai tới 20 dòng
+  thì tự vẽ bar giảm dần, ghi sự kiện `auto_chart`. Chỉ thêm khi dựng báo cáo, `insights.json` không đổi.
+- Word: table có `sort` tùy chọn; không có thì giảm dần theo cột số duy nhất, trừ bảng có cột thời gian. Tối đa 40 dòng.
+  Hệ quả: bảng nhiều chiều có một cột số cũng xếp theo số, các dòng cùng nhóm không còn đứng cạnh nhau.
+- Word: đoạn insight, nhãn, tiêu đề bảng giữ cùng trang với bảng, hình; mọi dòng bảng không cắt ngang trang.
+- `validate_synthesis`: conclusion giống summary trên 80% thì gửi lại AI. Câu "Không có hạn chế đáng kể..." được phép có chữ số
+  vì trùng nguyên văn `config.REPORT_NO_LIMITATIONS`.
+- Quy tắc tránh từ đánh giá mức độ chỉ nằm trong prompt, không có phép kiểm bằng code.
+
 ## Quyết định đã chốt
 - Prompt analysis trong `skills/analysis/` là nguồn duy nhất cho cả bộ kiểm định lẫn agent: kiểm định đo đúng
   prompt sẽ dùng thật.
@@ -347,6 +359,7 @@ Phần C, D, E, F, G:
 - Thêm thẻ `(SENSITIVE)` cho `CUSTOMER.customer_id` trong dictionary `bai1`, `bai2` trên R2, rồi bỏ
   `ANALYSIS_DEFAULT_SENSITIVE`.
 - Ngày 8 bỏ chạy container và bài 1.
+- Decision trùng ý (D6, D7 `bai0a`) ở pha giải.
 - R2 `output/<bài>/work/` còn file cũ của lần chạy trước `--restart` (đồng bộ không xóa): cần xử lý nếu tải hồ sơ từ R2 về.
 - Manifest đồng bộ chỉ ở máy này: máy khác hoặc container mới sẽ tải lại toàn bộ; object bị xóa tay trên R2 không được tải
   lại cho tới khi file đổi.

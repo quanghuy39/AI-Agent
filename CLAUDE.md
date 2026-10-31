@@ -34,7 +34,8 @@ Trạng thái từng ngày: xem `PROGRESS.md`.
 - `skills/analysis/` – `understand.md`, `plan.md`, `step.md`, `contract.md` (prompt), `schemas.py` (ProblemRestatement,
   AnalysisPlan, AnalysisStep, AgentMeta), `__init__.py` (load_prompt, render_prompt).
 - `report/` – `placeholders.py` (điền số, định dạng, `validate_synthesis`, nhãn), `synthesize.py` (pha tổng hợp),
-  `tables.py` (`result_tables`: cách duy nhất lấy file bảng của kết quả), `charts.py` (biểu đồ, `validate_visuals`),
+  `tables.py` (`result_tables`: cách duy nhất lấy file bảng của kết quả), `charts.py` (biểu đồ, `validate_visuals`,
+  biểu đồ dự phòng `with_auto_charts`),
   `docx_builder.py` (Word), `slides_outline.py`, `build.py` (dựng cả bộ vào `output/<bài>/report/`).
 - `skills/report/` – `synthesize.md` (prompt), `schemas.py` (SynthesisOutput, Insight, nội dung `insights.json`),
   `__init__.py` (load_prompt, render_prompt).

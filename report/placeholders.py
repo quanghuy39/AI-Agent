@@ -8,6 +8,7 @@ Placeholder {{R3.field}}: field la MOT khoa cua result_summary, khong co khoa lo
 import math
 import re
 from decimal import ROUND_HALF_UP, Context, Decimal
+from difflib import SequenceMatcher
 
 import config
 from ledger import CheckStatus, ResultStatus
@@ -138,6 +139,12 @@ def _placeholder_errors(where, text, allowed, valid, scope):
     return errors
 
 
+def _too_similar(first, second):
+    """So khop chuoi don gian, bo qua hoa thuong va khoang trang."""
+    a, b = (" ".join(text.lower().split()) for text in (first, second))
+    return SequenceMatcher(None, a, b, autojunk=False).ratio() > config.REPORT_CONCLUSION_MAX_SIMILARITY
+
+
 def validate_synthesis(output, problem, results):
     """Danh sach loi (cau ngan, gui lai duoc cho AI); rong la dat. results: moi ket qua trong so, ke ca khong valid."""
     errors = []
@@ -155,8 +162,12 @@ def validate_synthesis(output, problem, results):
     cited = {rid for ins in output.insights for rid in ins.result_ids}
     for name in TEXT_FIELDS:
         text = getattr(output, name)
+        if name == "limitations" and text.strip() == config.REPORT_NO_LIMITATIONS:
+            continue
         errors += _placeholder_errors(name, text, cited, valid, "result_ids của insight nào")
         errors += _text_errors(name, text)
+    if _too_similar(output.summary, output.conclusion):
+        errors.append("conclusion: gần như chép lại summary; trả lời ngắn từng yêu cầu.")
 
     n = len(requirements_of(problem))
     for ins in output.insights:
