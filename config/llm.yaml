@@ -2,7 +2,7 @@
 # Số liệu hạn mức lấy từ trang hạn mức của từng hãng ngày 27/10/2026. Các số khởi điểm chỉnh sau khi chạy thật.
 
 settings:
-  # 30/10/2026: chỉ gemini_3_5_flash_lite qua kiểm định analysis (9/12); codestral 8/12, rớt meta_valid 75% < 80%;
+  # 31/10/2026: report có 2 model kiểm định; vẫn false vì bật thì analysis chỉ còn 1 model (mất fallback)
   # không bật enforce vì report/slide chưa có model kiểm định (bật được thì làm ở Ngày 7)
   enforce_validation: false   # false: chạy cả model chưa qua kiểm định.
   timeout_s: 60
@@ -108,12 +108,15 @@ roles:
       # làm trần ngữ cảnh 5000 khiến bài 1 dừng ở Q4; vẫn ở report/slide
 
   report:
+    # 31/10/2026 kiểm định report (10 case, prompt Ngày 2 - sàng lọc năng lực chung):
+    # flash_lite 9/10 (placeholder_ok), ministral 9/10 (placeholder_ok) -> validated.
+    # Bỏ groq_gpt_oss_120b (10/10, đủ điều kiện validated) vì max_input_tokens 5000 kéo trần ngữ cảnh
+    #   cả chuỗi xuống 4.500; đưa lại nếu prompt tổng hợp đo được vừa trần đó.
+    # Bỏ openrouter_cohere_north_mini_code: rớt no_typed_numbers (tự gõ số) - lỗi nặng.
+    # Bỏ gemma_4_31b: lỗi 500 phía Google, chưa kiểm định xong.
     chain:
-      - {model: gemini_3_5_flash_lite, validated: false}
-      - {model: gemma_4_31b, validated: false}
-      - {model: mistral_ministral_14b, validated: false}
-      - {model: groq_gpt_oss_120b, validated: false}
-      - {model: openrouter_cohere_north_mini_code, validated: false}
+      - {model: gemini_3_5_flash_lite, validated: true}
+      - {model: mistral_ministral_14b, validated: true}
 
   slide:
     chain:

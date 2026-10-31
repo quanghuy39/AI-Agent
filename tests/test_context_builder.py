@@ -113,7 +113,7 @@ def test_budget_uses_smallest_model_of_each_role(role):
 
 def test_budget_known_values_now():
     assert (cb.min_input_tokens("analysis"), cb.min_input_tokens("report"), cb.min_input_tokens("slide")) \
-        == (9000, 5000, 5000)
+        == (9000, 30000, 5000)
 
 
 def test_build_prompt_reports_role_and_prompt(monkeypatch):
