@@ -19,10 +19,11 @@ Cập nhật: 31/10/2026, sau nghiệm thu Ngày 8. Mỗi mục: vấn đề –
 
 ### An toàn dữ liệu
 - File trung gian chứa `customer_id` thô trên R2 `output/`: bắt buộc sửa trước khi dùng dữ liệu công ty – `temp_touches.csv`, `temp_orders.csv` (41 MB) của R13, và từ lần `--redo` thêm `order_cleaned.csv`, `touch_cleaned.csv`, `attributed_orders.csv`, `campaign_order_attribution.csv`, đều ở `output/bai2/work/`, AI tự ghi để phép kiểm join đọc lại – phép kiểm join nhận cột cần thiết, chặn đồng bộ file `work/` có cột che, dọn file đã có trên R2 kèm sửa manifest.
-- Đồng bộ tải cả `work/_superseded/` – 7 file rớt của Q4 đã chuyển sang `work/_superseded/20261031_201606_853171/` (50 MB, 4 file có `customer_id` thô), lần đồng bộ tới sẽ tải chúng lên khóa mới trong khi khóa cũ `work/<tên>` vẫn còn – bỏ `work/_superseded/` khỏi đồng bộ, hoặc chung hướng chặn file có cột che.
+- Loại `work/_superseded/` khỏi đồng bộ R2 để không nhân đôi dữ liệu – 7 file rớt của Q4 (50 MB, 4 file có `customer_id` thô) đã lên khóa `work/_superseded/20261031_201606_853171/` trong khi khóa cũ `work/<tên>` vẫn còn – bỏ thư mục này khỏi `_local_files`, dọn hai bản trên R2 kèm sửa manifest.
 
 ### Tổng hợp báo cáo
-- Insight rỗng ở yêu cầu đề xuất – I6 "...dựa trên tệp kết quả đề xuất được tạo là có": `result_summary` của R15 chỉ có 2 số đếm và 1 cờ true, đề xuất nằm trong csv mà AI tổng hợp không thấy – bắt buộc `result_summary` chứa nội dung trả lời, đưa dòng đã che của bảng kết quả nhỏ vào prompt synthesize.
+- Báo cáo diễn đạt sai nghĩa trường của `result_summary` – I4 ghi 7.236 là "đơn hàng có nhiều lượt tiếp cận", trong khi R16 `orders_multi_touched` đếm đơn có từ 2 chiến dịch trở lên (`campaign_name` nunique > 1); cùng dữ liệu, đếm theo lượt tiếp cận ra 7.869 – AI tổng hợp chỉ thấy tên khóa – yêu cầu bước giải khai mô tả từng khóa, đưa mô tả vào prompt synthesize.
+- Insight rỗng ở yêu cầu đề xuất – I6 cũ "...dựa trên tệp kết quả đề xuất được tạo là có"; sau `--redo`, I5 chỉ còn 14 mục, 4 tăng, 5 giữ, 5 giảm, tên kênh và lý do nằm trong csv mà AI tổng hợp không thấy – bắt buộc `result_summary` chứa nội dung trả lời, đưa dòng đã che của bảng kết quả nhỏ vào prompt synthesize.
 - `validate_synthesis` bỏ lọt insight không có nội dung – hàm chỉ kiểm mã nội bộ, chữ số tự gõ, %, placeholder, độ phủ yêu cầu – thêm phép kiểm: yêu cầu có từ "đề xuất" phải có insight chứa giá trị ngoài số đếm và cờ true/false, hoặc đọc được đề xuất từ bảng.
 - Kết luận chỉ nhắc lại đề – mục 4 Word bài 2 không có số, không có khuyến nghị, chỉ viết "đã được so sánh", "đã được đánh giá"; `_too_similar` chỉ so với summary – kiểm conclusion phải có câu trả lời cho từng yêu cầu, so thêm với danh sách yêu cầu.
 - Hạn chế chung chung – mục 7 không nêu thiếu chi phí thật, nhiễu thống kê hay đếm trùng – yêu cầu hạn chế dẫn từ cờ và decision thật.
@@ -32,15 +33,14 @@ Cập nhật: 31/10/2026, sau nghiệm thu Ngày 8. Mỗi mục: vấn đề –
 - AI gõ cứng kết luận trong code – `"campaigns_bring_orders": True` (R13), `"recommendation_file_created": True` (R15), không tính từ dữ liệu – quét ast: giá trị trong `result_summary` không được là hằng số.
 - Check custom tự khen – R15 khai "Đã sử dụng dữ liệu cost_tier" chỉ vì `len > 0`, quy tắc đề xuất không dùng cost_tier dù `method` nói có; R12 check pass mà reason ghi "found", "is empty" – `meta_grader` không tin `passed` của check custom khi điều kiện không liên quan tới rủi ro đã khai.
 - Suy luận nhân quả không có đối chứng – "các chiến dịch thực sự đem lại đơn hàng": chỉ 13,41% đơn có touch trong 7 ngày trước, không có nhóm so sánh – thêm quy tắc chung: khẳng định "đem lại", "do" cần đối chứng, nếu không phải ghi là tương quan.
-- Quy gán trùng giữa chiến dịch – 7.236 đơn (15,15%) tính cho từ 2 chiến dịch, tổng theo chiến dịch 57.073 so với 47.770 đơn duy nhất; từng dòng như 7.321 thì đúng – nêu rõ trong báo cáo hoặc dùng quy gán một lần chạm.
 - Nhãn "Đã kiểm chứng" dễ hiểu nhầm – I2, I3 ghi đã kiểm chứng cho "cao nhất" trong khi chênh lệch là nhiễu – đổi thành "Số liệu đã kiểm", tách với mức chắc chắn của kết luận.
 - Ngưỡng cắt tùy tiện – D28 lấy 5,1%: Loyalty Bonus 0,05101 "Tăng", Seasonal Sale 0,05094 "Giữ" – ngưỡng quyết định phải dựa trên kiểm định, không dựa số gần trung bình.
 
 ## P2
 
 ### Báo cáo
-- Cột bảng sai nghĩa – Bảng 5 cột "Tổng số lượt tiếp cận" là số cặp sau lọc (7.531), số thật 35.180 – kiểm nhãn với tên cột gốc, bắt AI đặt tên cột rõ nghĩa.
-- Bảng đề xuất thiếu lý do – Bảng 6 có "Đề xuất", bỏ `reason`, `certainty` dù đề bài yêu cầu – bắt buộc đưa cột trả lời yêu cầu vào bảng.
+- Cột bảng sai nghĩa – Bảng 5 của R13 cột "Tổng số lượt tiếp cận" là số cặp sau lọc (7.531), số thật 35.180; R16 đã hết lỗi này do đổi bảng, chưa có phép kiểm chặn lặp lại – kiểm nhãn với tên cột gốc, bắt AI đặt tên cột rõ nghĩa.
+- Bảng đề xuất thiếu lý do – Bảng 5 sau `--redo` có "Hành động", bỏ `reason`, `certainty` dù đề bài yêu cầu – bắt buộc đưa cột trả lời yêu cầu vào bảng.
 - Câu vụng – "37 tháng/năm", "khẳng định có", tiêu đề bảng là danh sách tên cột, tỷ lệ 0,0513 thay vì 5,13% – quy tắc văn phong, đơn vị theo tên trường.
 - Decision nội bộ lọt vào Word – mục 6.2 có câu "chấp nhận R13 dù có cờ ..." – lọc decision `accept_flags` khỏi mục giả định.
 - Insight chỉ sâu bằng số trong `result_summary` – AI thấy tên file, tên cột, không thấy giá trị dòng – chung hướng sửa với I6.
@@ -53,7 +53,7 @@ Cập nhật: 31/10/2026, sau nghiệm thu Ngày 8. Mỗi mục: vấn đề –
 
 ### Phân tích
 - Code bước sau đoán sai tên cột file bước trước – Q3 `KeyError: 'total_touches'`, Q5 `KeyError: 'touch_count'`, tốn 2 lượt AI (31.011 token cho hai câu) – đưa danh sách cột của file bước trước vào prompt step.
-- `row_count` không ghi nó thuộc phép nối nào – `_row_count_owner` phải đoán từ nhãn, nhãn nêu cả hai bảng mà không có từ nối ("orders and touches cleaned") chỉ thành cờ – thêm trường `join_label` vào row_count và contract, lúc đó bỏ phần đoán; prompt đổi nên chạy lại kiểm định.
+- Nhận check `row_count` thuộc phép join đang đoán theo chữ trong nhãn; nên để meta khai cấu trúc (check thuộc bước nào) – `_row_count_owner` đọc `label`, nhãn nêu cả hai bảng mà không có từ nối ("orders and touches cleaned") chỉ thành cờ – thêm trường khai bước vào row_count và contract, lúc đó bỏ phần đoán; prompt đổi nên chạy lại kiểm định.
 - Contract chưa nói cách khai join nổ dòng có chủ ý – AI viết row_count trước sau bằng nhau trên bảng gốc thay vì số dòng sau join – thêm vào `contract.md` khi chạy lại kiểm định.
 - Hết số lần thử không để lại gì để dùng – Q4 có kết quả đúng ở lần 2 nhưng cả 4 lần đều bỏ – cho người dùng xem lỗi rồi quyết định, thay vì dừng hẳn.
 - File `work/` không có giới hạn cỡ – file trung gian 41 MB của R13 nằm trong `output_path` – đặt giới hạn cỡ file `work/`.
@@ -68,7 +68,7 @@ Cập nhật: 31/10/2026, sau nghiệm thu Ngày 8. Mỗi mục: vấn đề –
 - `--restart` trúng cache – lần chạy Ngày 8: understand, plan đều `cache_hit`, ra đúng kế hoạch cũ – bỏ qua cache cho prompt sau restart khi người dùng muốn.
 - `findings.json` không superseded khi `--restart` – còn F1, F2 của R3, R8; `tests/grade.py` vẫn đối chiếu – đánh dấu cùng kết quả.
 - Cờ mới sau khi kế hoạch đã chấp nhận chưa thành decision – chỉ đăng ký ở pha plan – đăng ký thêm ở pha loop.
-- `tests/grade.py` đối chiếu theo từ khóa – bài 2 ĐÃ NÊU 2/12 nhưng #6 chỉ trùng từ, đọc tay chỉ #9 là nêu thật – người chấm vẫn phải đọc; cân nhắc tiêu chí có cấu trúc.
+- `tests/grade.py` đối chiếu theo từ khóa – bài 2 sau `--redo` ĐÃ NÊU 3/12 nhưng #6, #10 chỉ trùng từ (D30 về gán đơn được tính là đã hỏi về lượt tiếp cận trước ngày đăng ký), đọc tay chỉ #9 là nêu thật; 28 KHỚP ở bảng 48 cặp cũng là trùng số – người chấm vẫn phải đọc; cân nhắc tiêu chí có cấu trúc.
 - `state.sensitive` chỉ lưu `--sensitive` – thẻ dictionary đổi giữa chừng không tính vào so sánh, chỉ bị etag chặn – lưu danh sách che đầy đủ.
 - Che giá trị chỉ thay chuỗi khớp nguyên văn (>= 4 ký tự); reason của check custom lấy nguyên từ meta – chuẩn hóa trước khi so.
 - Báo cáo cũ gắn `source_key` theo ngưỡng mặc định – báo cáo không lưu ngưỡng đã dùng – lưu ngưỡng và `--range` vào profile, lúc đó `--refresh` tự giữ được.
@@ -109,7 +109,7 @@ Cập nhật: 31/10/2026, sau nghiệm thu Ngày 8. Mỗi mục: vấn đề –
 - Hồ sơ `bai1` trước Ngày 6 không có `state.json`, `question_key` – lần đầu giải lại mọi câu – dùng `--restart`.
 - Bài `done` chạy lại chỉ báo xong, không đối chiếu `--sensitive` – thêm kiểm.
 - `runner.OUTPUT_DIR`, `quality.OUTPUT_DIR` đổi tạm biến toàn cục cho `--fake` – truyền tham số.
-- Open_item không tự đóng hết – O3 "Q4: không giải được sau 4 lần thử" của `bai2` vẫn mở sau khi Q4 giải xong và hiện trong `ho_so_bai2.md` – đóng khi câu đó có kết quả, rà soát từng loại.
+- Open_item không tự đóng hết – O3 "Q4: không giải được sau 4 lần thử" của `bai2` vẫn mở sau khi Q4 giải xong, phải đóng tay bằng `Ledger.close_open_item` – đóng khi câu đó có kết quả, rà soát từng loại.
 - Chuỗi `slide` trong `llm.yaml` chưa kiểm định, slide hiện không gọi AI – bỏ khi chưa dùng.
 - Ước lượng token = số ký tự / 3,4 + 700 – so với số thật trong log, chỉnh hệ số.
 - Tên riêng bị viết thường trong tiêu đề biểu đồ ("việt Nam") – nhận diện danh từ riêng.

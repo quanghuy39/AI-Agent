@@ -13,7 +13,7 @@ Cập nhật: 31/10/2026. Nguồn: git log, code trong repo, tóm tắt cuối n
 | 5 | Xong | Runner, skill phân tích, meta_grader, `analysis.loop`, fit_prompt, bộ kiểm định theo skill thật; chốt chuỗi analysis. Bài 0a ĐẠT toàn bộ; bài 1 chạy trọn 4 câu, số liệu đúng, phán đoán BI chưa đạt. 645 test pass. |
 | 6 | Xong | Điều phối theo pha, chạy tiếp được, `--fake` tách hồ sơ, điểm dừng xác nhận, decision pending và superseded, cờ chất lượng thành decision, `context_builder`, đồng bộ hồ sơ lên R2, 5 quy tắc chung trong prompt, `tests.grade <bài>`. Bài 2 chạy thật: số tổng hợp khớp, phán đoán BI chưa đạt. 858 test pass. |
 | 7 | Xong | Kiểm định report; pha synthesize; `output_path` đủ file bảng; biểu đồ, Word, hồ sơ bài toán, dàn ý slide, `--resynthesize`, `--build-report`. Bài 0a chạy thật: `grade_bai0a` ĐẠT 3/3, Word đủ 7 mục, không còn placeholder trong Word và `slides_outline.json`, mọi insight dẫn về id kết quả. 1239 test pass, commit cuối 2fb62a9. |
-| 8 | Xong | Cột nhạy cảm khai báo trong dictionary, profile lưu etag dictionary. Bài 2 chạy thật: số liệu đúng, phán đoán BI chưa đạt. Nghiệm thu 5 Đạt, 3 Một phần (số liệu còn hai lỗi ở bài 2, phán đoán BI bài 2 Không). `--redo`, lựa chọn `s` ở điểm dừng có cờ. README, BACKLOG. Lần `--redo R13` thật dừng mã 3 do phép kiểm join chặn nhầm, chưa sửa. 1293 test pass. |
+| 8 | Xong | Cột nhạy cảm khai báo trong dictionary, profile lưu etag dictionary. Bài 2 chạy thật: số liệu đúng, phán đoán BI chưa đạt. Nghiệm thu 5 Đạt, 3 Một phần (số đúng, một câu diễn đạt sai nghĩa; phán đoán BI bài 2 Không). `--redo`, lựa chọn `s` ở điểm dừng có cờ. README, BACKLOG. `--redo R13` với AI thật: lần đầu dừng mã 3 do phép kiểm join chặn nhầm, đã sửa, chạy tiếp xong mã 0, chỉ Q4, Q5 chạy lại. 1329 test pass. |
 
 ## Ngày 5
 
@@ -385,10 +385,10 @@ Nghiệm thu 8 tiêu chí:
 
 | # | Tiêu chí | Kết quả |
 |---|---|---|
-| 1 | Đáp án đúng, số truy vết được | Một phần: số liệu Một phần (Bảng 5 gán sai nghĩa cột, `campaigns_bring_orders` gõ cứng), phán đoán BI bài 2 Không |
+| 1 | Đáp án đúng, số truy vết được | Một phần: số đúng và truy vết được (kênh 18/18, chiến dịch 24/24, `cost_tier` 6/6; 47.770, 7.236 khớp phép tính độc lập; hai lỗi cũ của R13 đã hết), nhưng I4 diễn đạt sai nghĩa 7.236; phán đoán BI bài 2 Không (bẫy nêu thật 1/12, đọc tay) |
 | 2 | Bắt dữ liệu lỗi | Một phần: 0b 5/5, nhưng lỗi thời gian bài 2 không bắt |
-| 3 | Sửa một bước chỉ stale phần phụ thuộc | Đạt (đánh giá lại ở vòng 4): `--redo` và `s` ở điểm dừng có cờ gọi `mark_stale`; chưa thử trên bài thật với AI thật |
-| 4 | Dừng rồi chạy tiếp | Đạt |
+| 3 | Sửa một bước chỉ stale phần phụ thuộc | Đạt: chạy thật `--redo R13` với AI thật, chỉ R13 và R15 chạy lại (thành R16, R17); R11, R12, R14 giữ id, valid, không chạy lại |
+| 4 | Dừng rồi chạy tiếp | Đạt: thêm bằng chứng thật, dừng mã 3 ở Q4 rồi `python main.py bai2` tiếp đúng chỗ, giữ góp ý |
 | 5 | Đổi model chỉ qua `llm.yaml`, `.env` | Đạt |
 | 6 | 429, 5xx chuyển model; 401, 403, 400 không | Đạt |
 | 7 | Chỉ model đã kiểm định; log đủ | Một phần: log Đạt, 3/4 model analysis chưa validated |
@@ -422,7 +422,19 @@ Vòng 6, sửa lỗi chặn nhầm ở Q4:
 - `run_code(..., accept=)`: vòng lặp chấm meta trong thư mục tạm, chưa đạt thì không chép gì về `work/`. Lần thử sau không còn đọc được file của lần rớt.
 - 7 file rớt của Q4 chuyển sang `work/_superseded/20261031_201606_853171/` (sự kiện `archive_failed_attempts`), không xóa gì trên R2.
 - Chạy lại code thật trong thư mục tạm: lần 2, 3 đều đạt, 47.770 đơn; lần 3 thêm cờ đối chiếu vì nhãn `orders and touches cleaned` nêu cả hai bảng.
-- Chưa sửa contract: AI vẫn có thể khai row_count no-op, chỉ là không còn bị chặn. Việc tiếp theo: người dùng chạy `python main.py bai2`.
+- Chưa sửa contract: AI vẫn có thể khai row_count no-op, chỉ là không còn bị chặn.
+
+Vòng 7, chốt sau `python main.py bai2` (31/10/2026, 20:28 đến 20:34, mã 0, state `done`):
+- R13 superseded, R15 stale (không phải superseded: `mark_stale` chỉ đổi kết quả phụ thuộc thành stale; cả hai không còn dùng). R16 cho Q4 và R17 cho Q5 đều valid. R11, R12, R14
+  giữ id, valid, không chạy lại: từ lúc `--redo`, runner chỉ có `R16_Q4` và `R17_Q5`.
+- R16: 47.770 / 356.242 đơn, 7.236 đơn từ 2 chiến dịch trở lên, Seasonal Sale 6.201; khớp phép tính độc lập ở vòng 3. Gán mỗi đơn một chiến dịch nên hết đếm trùng của R13.
+- Q4, Q5 đạt ngay lần đầu, 0 lần rớt, 0 `correct_result`. Điểm dừng có cờ chọn `y` (D31). 3 lượt AI: analysis Q4, analysis Q5, report; đều gemini, `gemini_3_5_flash_lite`,
+  `fallback_count` 0, `model_switched` false, `json_retries` 0, không cache vì câu trong `redo_notes`; 15.596 token vào, 5.934 token ra.
+- Word, `slides_outline.json`, `ho_so_bai2.md` không còn `{{`; `insights.json` giữ placeholder ở `text` theo thiết kế, bản đã điền không có. Word, slide, `insights.json` không nhắc R13, R15;
+  `ho_so` vẫn liệt kê chúng trong lịch sử kết quả, đúng thiết kế.
+- `tests.grade bai2`: mốc số KHỚP 76, LỆCH 117, KHÔNG TÌM THẤY 136, CẦN NGƯỜI XEM 2 trên 331. Ba bảng tổng hợp khớp đủ; phần lệch là 48 cặp chiến dịch x kênh, agent không tính; 28 KHỚP của phần này là trùng số.
+- Bẫy theo script ĐÃ NÊU 3/12 (#6, #9, #10). Đọc tay chỉ **1/12**: #9. Từ "đăng ký" không có trong decision, finding, check, kế hoạch, Word. D30 nói gán đơn cho lượt tiếp cận gần nhất, không hỏi về lượt tiếp cận trước ngày đăng ký: #4 và #10 chỉ trùng từ ("lượt tiếp cận", "trước", "ngày"). #6 cũng chỉ trùng từ. #5, #12 mới là ý rủi ro trong tên check của R14, không lên báo cáo, không hỏi người dùng.
+- O3 đóng bằng `Ledger.close_open_item`. `ho_so_bai2.md` đã dựng trước đó vẫn hiện O3 mở, và `open_items.json` trên R2 còn bản cũ, tới khi chạy `python main.py bai2 --build-report` (không gọi AI, có đồng bộ).
 
 ## Quyết định đã chốt
 - Cờ info (31/10/2026): không sửa. Thiết kế 7.2 quy định cờ info không tạo điểm dừng riêng, chỉ liệt kê ở điểm dừng xử lý bất
