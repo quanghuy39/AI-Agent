@@ -306,6 +306,71 @@ def test_screen_reason_is_one_short_line(env, monkeypatch, capsys):
     assert "a" * 21 not in line and len(attempts(env)[0]["failure"]["reason"]) > 400
 
 
+# lan thu chua dat khong de lai file; loi lan truoc van gui cho AI
+REJECTED_CODE = ("import os\n"
+                 "open(os.path.join(os.environ['AGENT_OUTPUT_DIR'], 'rac.csv'), 'w').write('customer_id\\n1\\n')\n" + Q1_CODE)
+
+
+def test_rejected_attempt_leaves_no_file_in_output(env):
+    thin = step(REJECTED_CODE, ["q1.csv", "khong_co.csv"])
+    code, fake = run([PLAN, thin, STEP1, STEP2])
+    assert code == loop.DONE
+    work = env / "output" / TASK / "work"
+    assert not (work / "rac.csv").exists() and (work / "q1.csv").is_file()
+    assert "rac.csv" not in prompts(fake)[3]  # danh sach file gui AI o lan thu sau
+    runs = [e for e in ledger(env).read_log() if e.action == "R1_Q1"]
+    assert runs[0].extra["files_created"] == [] and runs[1].extra["files_created"]
+    assert ledger(env).get_result("R1").output_path == "work/q1.csv"
+
+
+def test_step_passes_and_keeps_files_graded_in_temp(env):
+    code, _ = run([PLAN, STEP1, STEP2])  # buoc 2 doc file buoc 1, cham file trong thu muc tam truoc khi chep ve
+    assert code == loop.DONE and ledger(env).get_result("R2").output_path == "work/q2.csv"
+
+
+def test_misplaced_meta_feedback_and_file_dropped(env):
+    wrong = Q1_CODE.replace("os.environ['AGENT_META_PATH']", "os.path.join(out, 'meta_q4.json')")
+    code, fake = run([PLAN, step(wrong, ["q1.csv"]), STEP1, STEP2])
+    assert code == loop.DONE
+    failure = attempts(env)[0]["failure"]
+    assert failure["kind"] == "no_meta" and "meta_q4.json" in failure["reason"] and "AGENT_META_PATH" in failure["reason"]
+    retry = prompts(fake)[3]
+    assert "code ghi meta vào 'meta_q4.json'; phải ghi vào" in retry
+    assert not (env / "output" / TASK / "work" / "meta_q4.json").exists()
+
+
+def test_feedback_keeps_short_history_of_earlier_attempts(env):
+    bad = [step(f"raise ValueError('lỗi số {i}')\n", ["q1.csv"]) for i in (1, 2, 3)]
+    _, fake = run([PLAN, *bad, STEP1, STEP2])
+    assert "các lần trước" not in prompts(fake)[3]  # lan goi lai dau tien: chua co lan nao truoc do
+    third, fourth = prompts(fake)[4:6]
+    assert "- Lần 1 (code_error): ValueError: lỗi số 1" in third and "lỗi số 2" in third
+    assert third.index("- Lần 1") < third.index("Lỗi của lần vừa rồi")
+    assert "- Lần 1 (code_error)" in fourth and "- Lần 2 (code_error)" in fourth and "- Lần 3" not in fourth
+
+
+def test_history_is_cut_from_front_when_prompt_shortened():
+    text = loop._with_history(["- Lần 1 (x): y"], "LỖI MỚI")
+    assert text.endswith("LỖI MỚI") and loop._with_history([], "LỖI MỚI") == "LỖI MỚI"
+
+
+def test_open_item_keeps_last_error_not_history(env):
+    bad = [step(f"raise ValueError('lỗi số {i}')\n", ["q1.csv"]) for i in range(1, 5)]
+    code, _ = run([PLAN, *bad], max_retries=3)
+    assert code == loop.STOPPED
+    text = next(o.text for o in ledger(env).open_items() if "không giải được" in o.text)
+    assert "Lỗi cuối: Code lỗi" in text and "các lần trước" not in text
+
+
+def test_history_masks_values(env):
+    leak = step("import os\nimport pandas as pd\n"
+                "c = pd.read_csv(os.path.join(os.environ['AGENT_INPUT_DIR'], 'CUSTOMER.csv'), dtype=str)\n"
+                "raise ValueError('khách lỗi: ' + c['customer_id'][0])\n", ["q1.csv"])
+    _, fake = run([PLAN, leak, leak, STEP1, STEP2])
+    assert "- Lần 1 (code_error): ValueError: khách lỗi: [đã che]" in prompts(fake)[4]
+    assert not any(c in p for p in prompts(fake) for c in IDS)
+
+
 # (h) sap xep phu thuoc
 def test_topo_order_and_cycle():
     qs = [SubQuestion(key="Q1", question="a", depends_on=["Q3"]), SubQuestion(key="Q2", question="b"),

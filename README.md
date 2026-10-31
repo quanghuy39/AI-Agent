@@ -154,7 +154,9 @@ profile cũ thì xóa `output/_fake/<bài>/data_profile.json` rồi chạy lại
 | 0 | Xong | Đọc báo cáo |
 | 1 | Lỗi gọi AI (cấu hình, khóa, yêu cầu) hoặc lỗi R2 | Đọc thông báo, sửa rồi chạy lại |
 | 2 | Hết hạn mức cả chuỗi model, tiến độ đã lưu | Chạy lại sau giờ được in ra |
-| 3 | Dừng có chủ đích: người dùng chọn n, `--sensitive` khác state, dictionary đã đổi, prompt quá dài, bản tóm tắt lộ giá trị che, file trong `report/` đang mở | Đọc thông báo; file Word đang mở thì đóng lại |
+| 3 | Dừng có chủ đích: người dùng chọn n; một câu hết số lần thử; AI báo không trả lời được; kế hoạch không dùng được; tổng hợp sai sau mọi lần thử; `--sensitive` khác state; dictionary đã đổi; prompt quá dài; bản tóm tắt lộ giá trị che; file trong `report/` đang mở; `--redo`, `--resynthesize` dùng sai id hoặc sai pha | Đọc thông báo, xem lý do từng lần thử ở sự kiện `step_attempt` trong `output/<bài>/run_log.jsonl` (trường `failure`), sửa rồi chạy lại `python main.py <bài>`; file Word đang mở thì đóng lại |
+
+Hết số lần thử của một câu thì mọi lần thử rớt không để lại file: chỉ lần thử đạt mới được chép về `output/<bài>/work/`.
 
 ## Trả lời điểm dừng
 

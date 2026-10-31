@@ -14,15 +14,12 @@ Cập nhật: 31/10/2026, sau nghiệm thu Ngày 8. Mỗi mục: vấn đề –
 - (c) Decision required bị duyệt gộp – giả định khác hỏi chung bằng một câu `y` – mọi decision required hỏi riêng từng cái, không gộp theo kind.
 - (d) `tests.grade` quét cả file dòng chi tiết – 712.742 số vì có `temp_touches.csv`, `temp_orders.csv`, chạy hơn 5 phút, dòng 308 khớp nhầm `ty_le_clicked` với `conversion_rate` – bỏ qua file dòng chi tiết, chỉ so cùng tên cột.
 
-### Chặn nhầm kết quả đúng
-- Check join bị chặn nhầm – `--redo R13` lần 2, 3 tính đúng 47.770 đơn duy nhất mà vẫn rớt: `_join_declaration_mismatch` thấy một `row_count` trước sau bằng nhau trên ORDER (không liên quan phép join) nên coi join nổ dòng là khai sai, dừng mã 3 sau 4 lần – chỉ báo lỗi khi `row_count` đó đúng là của phép join, không thì để thành cờ cho người xem; đổi câu thông báo, bỏ gợi ý "bảng trung gian" khi join nổ dòng là có chủ ý.
-
 ### Điểm dừng và sửa kết quả
 - Join nổ dòng mà vẫn cho đi tiếp – R13 280.103 → 9.900.061 dòng (34 lần), người dùng trả lời `y` (D26), kết quả vẫn `valid` – join nhiều-nhiều không khai `expected_ratio` thì gửi lại AI trước khi hỏi, buộc nêu lý do và cách chống đếm trùng.
 
 ### An toàn dữ liệu
 - File trung gian chứa `customer_id` thô trên R2 `output/`: bắt buộc sửa trước khi dùng dữ liệu công ty – `temp_touches.csv`, `temp_orders.csv` (41 MB) của R13, và từ lần `--redo` thêm `order_cleaned.csv`, `touch_cleaned.csv`, `attributed_orders.csv`, `campaign_order_attribution.csv`, đều ở `output/bai2/work/`, AI tự ghi để phép kiểm join đọc lại – phép kiểm join nhận cột cần thiết, chặn đồng bộ file `work/` có cột che, dọn file đã có trên R2 kèm sửa manifest.
-- File của lần thử rớt nằm lại `work/` – runner chép file về khi code chạy trọn, kể cả lần thử bị chấm rớt; 7 file của Q4 còn ở `work/`, lần sau AI thấy và có thể đọc nhầm, và đã lên R2 – chỉ chép về khi lần thử đạt, hoặc chuyển sang `_superseded/` khi rớt.
+- Đồng bộ tải cả `work/_superseded/` – 7 file rớt của Q4 đã chuyển sang `work/_superseded/20261031_201606_853171/` (50 MB, 4 file có `customer_id` thô), lần đồng bộ tới sẽ tải chúng lên khóa mới trong khi khóa cũ `work/<tên>` vẫn còn – bỏ `work/_superseded/` khỏi đồng bộ, hoặc chung hướng chặn file có cột che.
 
 ### Tổng hợp báo cáo
 - Insight rỗng ở yêu cầu đề xuất – I6 "...dựa trên tệp kết quả đề xuất được tạo là có": `result_summary` của R15 chỉ có 2 số đếm và 1 cờ true, đề xuất nằm trong csv mà AI tổng hợp không thấy – bắt buộc `result_summary` chứa nội dung trả lời, đưa dòng đã che của bảng kết quả nhỏ vào prompt synthesize.
@@ -56,7 +53,8 @@ Cập nhật: 31/10/2026, sau nghiệm thu Ngày 8. Mỗi mục: vấn đề –
 
 ### Phân tích
 - Code bước sau đoán sai tên cột file bước trước – Q3 `KeyError: 'total_touches'`, Q5 `KeyError: 'touch_count'`, tốn 2 lượt AI (31.011 token cho hai câu) – đưa danh sách cột của file bước trước vào prompt step.
-- Phản hồi cho AI chỉ có lỗi của lần ngay trước – `--redo R13` lần 4 ghi meta sai chỗ (`work/meta_q4.json`), AI không còn thấy lỗi lần trước – nêu rõ khi thấy file meta sai chỗ, giữ lỗi các lần trước trong `error_feedback`.
+- `row_count` không ghi nó thuộc phép nối nào – `_row_count_owner` phải đoán từ nhãn, nhãn nêu cả hai bảng mà không có từ nối ("orders and touches cleaned") chỉ thành cờ – thêm trường `join_label` vào row_count và contract, lúc đó bỏ phần đoán; prompt đổi nên chạy lại kiểm định.
+- Contract chưa nói cách khai join nổ dòng có chủ ý – AI viết row_count trước sau bằng nhau trên bảng gốc thay vì số dòng sau join – thêm vào `contract.md` khi chạy lại kiểm định.
 - Hết số lần thử không để lại gì để dùng – Q4 có kết quả đúng ở lần 2 nhưng cả 4 lần đều bỏ – cho người dùng xem lỗi rồi quyết định, thay vì dừng hẳn.
 - File `work/` không có giới hạn cỡ – file trung gian 41 MB của R13 nằm trong `output_path` – đặt giới hạn cỡ file `work/`.
 - Giả định cũ còn hiệu lực sau `--redo` – decision do bước cũ thêm (`new_assumptions`) không gắn với kết quả nên vẫn confirmed và gửi cho AI – lưu id kết quả trong decision, superseded cùng kết quả.
@@ -81,7 +79,6 @@ Cập nhật: 31/10/2026, sau nghiệm thu Ngày 8. Mỗi mục: vấn đề –
 - Runner không phải sandbox thật – quét tĩnh lách được bằng ghép chuỗi lúc chạy – sandbox Docker (xem P3).
 - Đồng bộ chưa có bản đồ file hiệu lực – 23 file cũ ở `work/` trên R2 lẫn với file mới; hiện đọc `results.json` – tải bản đồ file đang hiệu lực lên R2.
 - Báo cáo cũ còn trên R2 khi `--redo` dở dang – local đã chuyển `report/`, `insights.json` sang `_superseded/` nhưng `output/bai2/report/` trên R2 vẫn là bản dẫn R13 đã superseded – chung hướng bản đồ file, hoặc tải dấu "báo cáo chưa hiệu lực".
-- README và CLAUDE.md chưa liệt kê "hết số lần thử" trong các lý do mã 3 – thêm một cụm từ.
 - `Start-Transcript` không ghi output của `python` trong PowerShell 5.1 – `bai2_redo_ngay8.txt` rỗng – dùng `run_log.jsonl` để xem lý do.
 - `insights.json` cũ còn trên R2 tới khi bị ghi đè – đồng bộ không xóa – chung hướng trên.
 - Manifest đồng bộ chỉ ở một máy – máy khác tải lại toàn bộ; object xóa tay không được tải lại tới khi file đổi – so etag R2 thay vì tin manifest.
@@ -112,7 +109,7 @@ Cập nhật: 31/10/2026, sau nghiệm thu Ngày 8. Mỗi mục: vấn đề –
 - Hồ sơ `bai1` trước Ngày 6 không có `state.json`, `question_key` – lần đầu giải lại mọi câu – dùng `--restart`.
 - Bài `done` chạy lại chỉ báo xong, không đối chiếu `--sensitive` – thêm kiểm.
 - `runner.OUTPUT_DIR`, `quality.OUTPUT_DIR` đổi tạm biến toàn cục cho `--fake` – truyền tham số.
-- Open_item không tự đóng hết – rà soát từng loại.
+- Open_item không tự đóng hết – O3 "Q4: không giải được sau 4 lần thử" của `bai2` vẫn mở sau khi Q4 giải xong và hiện trong `ho_so_bai2.md` – đóng khi câu đó có kết quả, rà soát từng loại.
 - Chuỗi `slide` trong `llm.yaml` chưa kiểm định, slide hiện không gọi AI – bỏ khi chưa dùng.
 - Ước lượng token = số ký tự / 3,4 + 700 – so với số thật trong log, chỉnh hệ số.
 - Tên riêng bị viết thường trong tiêu đề biểu đồ ("việt Nam") – nhận diện danh từ riêng.

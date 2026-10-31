@@ -262,6 +262,72 @@ def test_meta_ignored_when_code_fails(env):
     assert r.timed_out and r.meta is None
 
 
+@pytest.mark.parametrize("target", ["os.path.join(os.environ['AGENT_OUTPUT_DIR'], 'meta_q4.json')", "'meta.json'"])
+def test_meta_in_wrong_place_is_reported_not_read(env, target):
+    r = rc.run_code(f"import json, os\njson.dump({{'checks': []}}, open({target}, 'w'))\n", TASK, "meta_wrong")
+    assert r.ok and r.meta is None and "AGENT_META_PATH" in r.meta_error and "không được chấm" in r.meta_error
+    assert Ledger(env / "output" / TASK).read_log()[-1].extra["meta_error"] == r.meta_error
+
+
+def test_meta_shape_with_other_file_name_is_reported(env):
+    code = ("import json, os\njson.dump({'result_summary': {}, 'checks': []}, "
+            "open(os.path.join(os.environ['AGENT_OUTPUT_DIR'], 'ket_qua.json'), 'w'))\n")
+    assert "ket_qua.json" in rc.run_code(code, TASK, "meta_shape").meta_error
+
+
+def test_other_json_or_earlier_meta_file_is_not_misplaced_meta(env):
+    other = "import json, os\njson.dump({'a': 1}, open(os.path.join(os.environ['AGENT_OUTPUT_DIR'], 'map.json'), 'w'))\n"
+    assert rc.run_code(other, TASK, "json_other").meta_error is None
+    work = env / "output" / TASK / "work"
+    (work / "meta_cu.json").write_text("{}", encoding="utf-8")  # file cu, lan nay khong ghi
+    assert rc.run_code("print(1)", TASK, "json_old").meta_error is None
+    assert rc.run_code(WRITE_META, TASK, "meta_right").meta_error is None
+
+
+def test_meta_in_right_place_wins_over_copy_elsewhere(env):
+    copy = "open(os.path.join(os.environ['AGENT_OUTPUT_DIR'], 'meta_copy.json'), 'w').write('{}')\n"
+    r = rc.run_code(WRITE_META + copy, TASK, "meta_both")
+    assert r.meta is not None and r.meta_error is None
+
+
+# ---------- accept: chi giu file cua lan thu dat ----------
+
+def test_accept_false_keeps_no_file(env):
+    work = env / "output" / TASK / "work"
+    r = rc.run_code(GOOD, TASK, "R1", accept=lambda *a: False)
+    assert r.ok and r.files_created == [] and r.files_written == []
+    assert list(work.iterdir()) == []
+    assert Ledger(env / "output" / TASK).read_log()[-1].extra["files_created"] == []
+
+
+def test_accept_true_copies_and_sees_files_in_temp(env):
+    seen = {}
+
+    def accept(result, input_dir, work_dir):
+        seen.update(ok=result.ok, input=(input_dir / "SALES.csv").is_file(), work=work_dir,
+                    file=(work_dir / "revenue_by_category.csv").is_file())
+        return True
+
+    r = rc.run_code(GOOD, TASK, "R1", accept=accept)
+    assert seen["ok"] and seen["input"] and seen["file"]
+    assert "agent_run_" in str(seen["work"]) and not seen["work"].exists()  # thu muc tam da don
+    assert r.files_created == [str(env / "output" / TASK / "work" / "revenue_by_category.csv")]
+
+
+def test_accept_not_called_when_code_fails(env):
+    r = rc.run_code("raise SystemExit(1)", TASK, "R1", accept=lambda *a: pytest.fail("không được gọi"))
+    assert not r.ok
+
+
+def test_rejected_attempt_keeps_earlier_files_unchanged(env):
+    rc.run_code(GOOD, TASK, "R1")
+    path = env / "output" / TASK / "work" / "revenue_by_category.csv"
+    before = path.read_bytes()
+    rewrite = "import os\nopen(os.path.join(os.environ['AGENT_OUTPUT_DIR'], 'revenue_by_category.csv'), 'w').write('x')\n"
+    rc.run_code(rewrite, TASK, "R2", accept=lambda *a: False)
+    assert path.read_bytes() == before
+
+
 def test_meta_does_not_leak_between_runs(env):
     assert rc.run_code(WRITE_META, TASK, "S1").meta is not None
     read = ("import os\np = os.environ['AGENT_META_PATH']\n"

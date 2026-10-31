@@ -22,7 +22,8 @@ Trạng thái từng ngày: xem `PROGRESS.md`.
   data_profile, problem, state, insights, run_log.jsonl; file của lần làm trước ở `work/_superseded/<thời điểm>/`,
   `insights.json` và `report/` bị bỏ ở `_superseded/`; file trong `report/` bị khóa thì `ReportLocked`). Decision có
   status pending, confirmed, superseded; code dùng `active_decisions()`, `decisions()` trả cả superseded để đối chiếu.
-- `runner/run_code.py` – chạy code AI: thư mục tạm, input chỉ đọc, bỏ biến bí mật, quét ast, timeout, meta.
+- `runner/run_code.py` – chạy code AI: thư mục tạm, input chỉ đọc, bỏ biến bí mật, quét ast, timeout, meta. `run_code(..., accept=)`:
+  vòng lặp chấm meta trong thư mục tạm, lần thử chưa đạt không chép file về `work/`.
 - `main.py` – luồng duy nhất: máy trạng thái understand → explore → plan → loop → synthesize → done, lưu `state.json`
   sau mỗi pha, chuyển exception thành mã thoát (`exit_code_for`). `--fake` ghi hồ sơ vào `output/_fake/<bài>/`, không
   đụng hồ sơ thật, không đồng bộ R2.
@@ -70,8 +71,8 @@ python tests/llm_eval/run_eval.py --list              # số case theo role
 python tests/llm_eval/run_eval.py --model <key> --role analysis [--limit N] [--resume] --yes   # GỌI API THẬT
 ```
 `main.py` và `analysis.loop` trả mã: 0 xong, 1 lỗi gọi AI hoặc lỗi R2, 2 hết hạn mức chuỗi model (chạy lại để tiếp tục),
-3 dừng (StopLoop: người dùng từ chối, prompt quá dài sau mọi bậc cắt, `--sensitive` khác state, dictionary trên R2 khác
-etag lưu trong profile, ...; bản tóm tắt lộ giá trị che; hoặc file trong `report/` bị khóa).
+3 dừng (StopLoop: người dùng từ chối, một câu hết số lần thử, prompt quá dài sau mọi bậc cắt, `--sensitive` khác state, dictionary
+trên R2 khác etag lưu trong profile, ...; bản tóm tắt lộ giá trị che; hoặc file trong `report/` bị khóa).
 Chạy lại: tiếp từ pha trong `state.json`; câu đã giải lấy từ `Ledger.results_by_question()` (chỉ kết quả valid).
 `--sensitive` chốt vào state ở lần chạy đầu, muốn đổi thì `--restart --sensitive ...`. `--restart` chuyển kết quả valid
 và mọi decision thành superseded (giữ trong file, không dùng lại, hỏi lại từ đầu), toàn bộ file `work/` sang

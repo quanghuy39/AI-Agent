@@ -7,10 +7,11 @@ Chay thu: python -m runner.run_code <task> <file_code.py> [--step TEN] [--timeou
    tam (AGENT_INPUT_DIR), khong biet cache/ hay answers/.
 2. Moi truong tien trinh con: bo moi bien R2_*, *_API_KEY, LLM_CONFIG_PATH (va PYTHONPATH); them AGENT_INPUT_DIR,
    AGENT_OUTPUT_DIR, PYTHONIOENCODING=utf-8. AGENT_OUTPUT_DIR la thu muc tam <tmp>/work/: truoc khi chay chep
-   output/<task>/work/ vao do (de doc file trung gian cua buoc truoc); chi khi chay tron (ok) moi chep file
-   moi/da doi ve (loi, qua gio, bi chan: khong chep, files_created rong).
+   output/<task>/work/ vao do (de doc file trung gian cua buoc truoc); chi khi chay tron (ok) va accept (neu co)
+   dong y moi chep file moi/da doi ve (con lai: khong chep, files_created rong, file mat cung thu muc tam).
    AGENT_META_PATH tro toi <tmp>/meta/meta.json: code ghi JSON meta vao do; runner doc vao RunResult.meta
-   (chi khi chay tron), khong chep ve dau ca. Code AI khong biet duong dan nao cua du an.
+   (chi khi chay tron), khong chep ve dau ca. Ghi meta cho khac thi bao meta_error, khong doc file do.
+   Code AI khong biet duong dan nao cua du an.
 3. Quet tinh (ast) truoc khi chay: import cam (config.RUNNER_FORBIDDEN_IMPORTS) va duong dan cam trong hang chuoi
    (config.RUNNER_FORBIDDEN_PATTERNS) -> tu choi, khong chay.
 4. subprocess voi sys.executable, cwd = thu muc lam viec tam, timeout; qua gio thi kill, timed_out=True.
@@ -252,6 +253,17 @@ def read_meta(path):
     return meta, None
 
 
+def _misplaced_meta(paths):
+    """Cau bao loi neu code ghi file trong giong meta (ten co 'meta' hoac co du khoa cua meta) thay vi AGENT_META_PATH,
+    khong thi None. Chi nhan ra de bao dung loi, khong cham noi dung file do."""
+    for path in sorted(p for p in paths if p.suffix.lower() == ".json"):
+        meta = read_meta(path)[0] or {}
+        if "meta" in path.stem.lower() or {"result_summary", "checks"} <= set(meta):
+            return (f"code ghi meta vào '{path.name}'; phải ghi vào os.environ[\"AGENT_META_PATH\"], "
+                    f"file đó không được chấm")
+    return None
+
+
 # ---------- ham chinh ----------
 
 def execute(code, input_dir, work_dir, run_dir, meta_path, timeout=None, result=None):
@@ -280,8 +292,9 @@ def execute(code, input_dir, work_dir, run_dir, meta_path, timeout=None, result=
     return result
 
 
-def run_code(code, task, step_name, timeout=None):
-    """Chay code cua AI cho bai task. Tra ve RunResult (khong raise khi code loi/bi chan/qua gio)."""
+def run_code(code, task, step_name, timeout=None, accept=None):
+    """Chay code cua AI cho bai task. Tra ve RunResult (khong raise khi code loi/bi chan/qua gio).
+    accept(result, input_dir, work_dir) -> bool: goi khi chay tron, luc file con trong thu muc tam; False thi khong chep ve."""
     if not _TASK_RE.match(task or "") or task.lower() == "answers":
         raise ValueError(f"task không hợp lệ: {task!r}")
     if not _STEP_RE.match(step_name or ""):
@@ -324,7 +337,12 @@ def run_code(code, task, step_name, timeout=None):
 
         before, before_times = _snapshot(work_dir), _mtimes(work_dir)
         execute(code, input_dir, work_dir, run_dir, meta_path, timeout, result)
-        if result.ok:  # chi chep ve khi chay tron; loi/qua gio thi file that giu nguyen, files_created rong
+        written = sorted(k for k, v in _mtimes(work_dir).items() if before_times.get(k) != v)
+        if result.ok and result.meta is None and result.meta_error is None:
+            result.meta_error = _misplaced_meta([work_dir / rel for rel in written]
+                                                + [p for p in run_dir.iterdir() if p.is_file()])
+        # chi chep ve khi chay tron va duoc chap nhan; con lai file that giu nguyen, files_created rong
+        if result.ok and (accept is None or accept(result, input_dir, work_dir)):
             changed = sorted(k for k, v in _snapshot(work_dir).items() if before.get(k) != v)
             for rel in changed:
                 dst = real_work / rel
@@ -332,7 +350,6 @@ def run_code(code, task, step_name, timeout=None):
                 shutil.copyfile(work_dir / rel, dst)
             result.files_created = [str(real_work / rel) for rel in changed]
             # lan thu truoc da ghi y het thi file khong "doi", nhung van la file cua lan chay nay
-            written = sorted(k for k, v in _mtimes(work_dir).items() if before_times.get(k) != v)
             result.files_written = [str(real_work / rel) for rel in written]
     finally:
         _rmtree(tmp)

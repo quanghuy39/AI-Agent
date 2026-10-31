@@ -4,6 +4,7 @@ Chay: python -m pytest tests/test_meta_grader.py -v
 """
 
 import json
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -11,6 +12,7 @@ import pytest
 from analysis import meta_grader as mg
 from analysis.meta_grader import grade_meta
 from ledger import Ledger
+from runner import run_code as rc
 from skills.analysis.schemas import AnalysisStep
 
 SECRET = "SECRET_VALUE"
@@ -213,7 +215,8 @@ def test_join_declared_raw_table_but_real_join_keeps_rows(join_dirs):
     assert not r.ok and len(r.structural_errors) == 1
     err = r.structural_errors[0]
     assert "check join 'khach-don' khai báo nối với ORDER.csv làm tăng lên 13 dòng" in err
-    assert "row_count cho thấy kết quả giữ 5 dòng" in err and "AGENT_OUTPUT_DIR" in err
+    assert "check row_count 'noi khach' của phép nối này ghi 5 → 5 dòng" in err and "AGENT_OUTPUT_DIR" in err
+    assert "expected_ratio" in err and "trung gian" not in err
     assert by_name(r)["khach-don"]["status"] == "flag"  # check van duoc cham nhu cu
     for value in ("K1", "K2", "O1"):
         assert value not in err
@@ -241,3 +244,107 @@ def test_join_without_matching_row_count_keeps_old_behaviour(join_dirs):
     meta["checks"][1].update(before=12, after=12)
     r = grade_meta(meta, step(output_files=[]), *join_dirs)
     assert r.ok and r.structural_errors == []
+
+
+# ---------- row_count nao thuoc phep noi nao ----------
+
+CHECK_NAME = "khach-don (đối chiếu row_count)"
+
+
+def labelled_meta(label):
+    m = join_meta("ORDER.csv", 5)
+    m["checks"][1]["label"] = label
+    return m
+
+
+@pytest.mark.parametrize("label", ["noi khach", "customer_order_merge", "Nối CUSTOMER với ORDER", "merge", "sau khi join",
+                                   "Customer segment merge", "ghép đơn"])
+def test_row_count_of_this_join_is_structural_error(join_dirs, label):
+    r = grade_meta(labelled_meta(label), step(output_files=[]), *join_dirs)
+    assert not r.ok and f"check row_count '{label}'" in r.structural_errors[0]
+
+
+@pytest.mark.parametrize("label", ["customer", "CUSTOMER table load", "customer_df row count", "order_df", "touch customer"])
+def test_row_count_of_one_table_is_ignored(join_dirs, label):
+    # giong Q4 lan 2: row_count 'order' truoc sau bang nhau khong noi gi ve phep noi
+    r = grade_meta(labelled_meta(label), step(output_files=[]), *join_dirs)
+    assert r.ok and r.structural_errors == [] and CHECK_NAME not in by_name(r)
+
+
+@pytest.mark.parametrize("label", ["sau bước 2", "row count", "customer and orders cleaned"])
+def test_row_count_of_unknown_owner_is_flag(join_dirs, label):
+    r = grade_meta(labelled_meta(label), step(output_files=[]), *join_dirs)
+    assert r.ok and r.structural_errors == []
+    c = by_name(r)[CHECK_NAME]
+    assert c["status"] == "flag" and f"'{label}'" in c["reason"] and "13 dòng" in c["reason"]
+    assert any(f.startswith(CHECK_NAME) for f in r.flags)
+
+
+def test_declared_explosion_passes_even_with_unknown_row_count(join_dirs):
+    m = labelled_meta("sau bước 2")
+    m["checks"].insert(1, {"type": "row_count", "label": "nối đơn", "before": 5, "after": 13, "expect": "free",
+                           "expected_ratio": [1, 4]})
+    r = grade_meta(m, step(output_files=[]), *join_dirs)
+    assert r.ok and CHECK_NAME not in by_name(r) and by_name(r)["nối đơn"]["status"] == "pass"
+    assert "khóa trùng" in by_name(r)["khach-don"]["reason"]  # join_check van bao nhan dong
+
+
+def test_row_count_of_other_join_named_in_label_is_ignored(join_dirs):
+    inp, _ = join_dirs
+    (inp / "STORE.csv").write_text("cid,s\nK1,A\nK2,A\nK3,A\nK4,A\nK5,A\n", encoding="utf-8")
+    r = grade_meta(labelled_meta("customer_store_join"), step(output_files=[]), *join_dirs)
+    assert r.ok and CHECK_NAME not in by_name(r)
+
+
+def two_joins(row_count_at):
+    joins = [{"type": "join", "label": "khach-don", "left": "CUSTOMER.csv", "right": "ORDER.csv",
+              "left_on": "cid", "right_on": "cid", "how": "left"},
+             {"type": "join", "label": "khach-gop", "left": "CUSTOMER.csv", "right": "order_counts.csv",
+              "left_on": "cid", "right_on": "cid", "how": "left"}]
+    checks = [custom(), *joins]
+    checks.insert(row_count_at, {"type": "row_count", "label": "merge", "before": 5, "after": 5, "expect": "same"})
+    return {"result_summary": {"n": 1}, "checks": checks}
+
+
+def test_row_count_without_table_name_belongs_to_nearest_join(join_dirs):
+    grade = lambda at: grade_meta(two_joins(at), step(output_files=[]), *join_dirs)  # noqa: E731
+    assert not grade(1).ok  # ngay truoc 'khach-don', join nhan dong
+    assert grade(3).ok and CHECK_NAME not in by_name(grade(3))  # ngay sau 'khach-gop', join khong nhan dong
+    tie = grade(2)  # giua hai join: khong biet cua join nao
+    assert tie.ok and by_name(tie)[CHECK_NAME]["status"] == "flag"
+
+
+# ---------- dung code that cua Q4 (bai 2), du lieu gia ----------
+
+Q4_ORDER = "order_id,customer_id,order_date\nO1,C1,10-01-2026\nO2,C2,15-02-2026\nO3,C1,01-06-2026\nO4,C3,05-01-2026\n"
+Q4_TOUCH = ("touch_id,customer_id,campaign_name,channel,touch_date\nT1,C1,Sale,Web,2026-01-08\nT2,C1,Flash,Web,2026-01-09\n"
+            "T3,C1,Sale,Web,2025-12-01\nT4,C2,Sale,Web,2026-02-14\nT5,C2,Flash,Web,2026-01-01\nT6,C2,Flash,Web,2025-01-01\n")
+
+
+def run_q4(tmp_path, fixture):
+    """Join ORDER, CAMPAIGN_TOUCH nhan 4 dong thanh 9; 2 don co touch trong 7 ngay, O1 boi 2 chien dich."""
+    inp, work, run_dir, meta_dir = (tmp_path / n for n in ("input", "work", "run", "meta"))
+    for d in (inp, work, run_dir, meta_dir):
+        d.mkdir()
+    (inp / "ORDER.csv").write_text(Q4_ORDER, encoding="utf-8")
+    (inp / "CAMPAIGN_TOUCH.csv").write_text(Q4_TOUCH, encoding="utf-8")
+    code = (Path(__file__).parent / "fixtures" / fixture).read_text(encoding="utf-8")
+    run = rc.execute(code, inp, work, run_dir, meta_dir / "meta.json")
+    assert run.ok and run.meta is not None
+    return grade_meta(run.meta, step(output_files=["campaign_order_attribution.csv"]), inp, work)
+
+
+def test_q4_attempt_2_code_passes(tmp_path):
+    r = run_q4(tmp_path, "q4_lan2.py")
+    assert r.ok and r.structural_errors == []
+    assert r.result_summary["total_attributed_orders"] == 2 and r.result_summary["orders_multi_touched"] == 1
+    join = by_name(r)["order and campaign_touch join"]
+    assert join["status"] == "flag" and "dự kiến 9 dòng" in join["reason"]  # join no dong khong khai: van la co
+    assert "order and campaign_touch join (đối chiếu row_count)" not in by_name(r)
+
+
+def test_q4_attempt_3_code_passes_with_flag(tmp_path):
+    # nhan 'orders and touches cleaned' nhac ca hai ben, khong noi la join: khong chan, cho nguoi xem
+    r = run_q4(tmp_path, "q4_lan3.py")
+    assert r.ok and r.structural_errors == [] and r.result_summary["total_attributed_orders"] == 2
+    assert by_name(r)["order and campaign_touch join (đối chiếu row_count)"]["status"] == "flag"

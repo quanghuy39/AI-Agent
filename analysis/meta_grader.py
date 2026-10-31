@@ -9,11 +9,13 @@ reason/flags/structural_errors chi chua so dem, ten cot, ten file; KHONG chua gi
 chi ghi ten loi). Rieng reason cua check custom lay nguyen tu meta (do code AI tu viet).
 """
 
+import re
 from pathlib import Path
 
 import pandas as pd
 from pydantic import BaseModel, Field, ValidationError
 
+import config
 from skills.analysis.schemas import AgentMeta
 from storage import r2
 from validators import join_check, range_check, row_count_check, sum_consistency, to_ledger_check
@@ -122,19 +124,80 @@ def _grade_check(check, input_dir, work_dir, cache):
     return r
 
 
-def _join_declaration_mismatch(check, result, all_checks):
-    """Khai bao join khong khop phep noi that: join_check du bao nhan ban dong (expected_rows > so dong trai)
-    nhung trong cung meta co row_count before = after = so dong trai (phep noi that giu nguyen so dong).
-    Khong co row_count nhu vay -> None (giu hanh vi cu: chi co). Chi dung so dem, ten file, label."""
+def _words(text):
+    return re.findall(r"[^\W_]+", text.lower())
+
+
+def _mentions(words, names):
+    """Co tu bat dau bang mot trong cac ten: 'orders', 'touch_df' nhac toi bang order, touch."""
+    return any(w.startswith(n) for w in words for n in names)
+
+
+def _table_names(filename):
+    return {w for w in _words(Path(filename).stem) if len(w) >= config.JOIN_LABEL_MIN_NAME_CHARS}
+
+
+def _other_tables(check, input_dir, work_dir):
+    """Ten cac bang khac hai ben cua phep noi, moi bang la mot tap tu."""
+    sides = {Path(check.left).stem.lower(), Path(check.right).stem.lower()}
+    files = [p for base in (input_dir, work_dir) for p in Path(base).glob("*") if p.suffix.lower() in TABLE_EXTS]
+    return [_table_names(p.name) for p in files if p.stem.lower() not in sides]
+
+
+def _row_count_owner(row_count, pos, check, join_pos, joins, others):
+    """row_count nay ghi ve dau, doc tu nhan: "join" (dung phep noi nay), "other" (bang rieng le hoac phep noi khac),
+    "unknown". Nhan chi nhac mot bang la so dong cua bang do (vd. 'order', 'touch_df'), khong phai cua phep noi."""
+    words = _words(row_count.label)
+    left, right = _table_names(check.left), _table_names(check.right)
+    names_left, names_right = _mentions(words, left - right), _mentions(words, right - left)
+    names_other = any(names and all(_mentions(words, {n}) for n in names) for names in others)
+    if not _mentions(words, config.JOIN_LABEL_WORDS):
+        if names_left and names_right:
+            return "unknown"
+        return "other" if names_left or names_right or names_other else "unknown"
+    if names_left and names_right:
+        return "join"
+    if names_other:
+        return "other"
+    if names_left or names_right:
+        return "join"
+    # nhan chi noi "join", khong ten bang: thuoc phep noi gan nhat trong meta
+    distances = {j: abs(j - pos) for j in joins}
+    nearest = [j for j, d in distances.items() if d == min(distances.values())]
+    if join_pos not in nearest:
+        return "other"
+    return "join" if len(nearest) == 1 else "unknown"
+
+
+def _join_declaration_mismatch(check, pos, result, all_checks, input_dir, work_dir):
+    """Khai bao join khong khop phep noi that: join_check du bao nhan ban dong (expected_rows > so dong trai) nhung
+    row_count cua chinh phep noi nay giu nguyen so dong trai -> ("error", cau loi). Row_count giu nguyen so dong ma khong
+    biet thuoc dau -> ("flag", ly do). Con lai None: chi co cua join_check, ke ca khi meta da khai dung so dong nhan len.
+    Chi dung so dem, ten file, label."""
     details = result.get("details") or {}
     n_left, expected = details.get("n_left"), details.get("expected_rows")
     if n_left is None or expected is None or expected <= n_left:
         return None
-    if not any(c.type == "row_count" and c.before == n_left and c.after == n_left for c in all_checks):
+    row_counts = [(i, c) for i, c in enumerate(all_checks) if c.type == "row_count" and c.before == n_left]
+    if any(c.after > n_left for _, c in row_counts):
         return None
-    return (f"check join '{check.label}' khai báo nối với {check.right} làm tăng lên {expected} dòng, nhưng row_count "
-            f"cho thấy kết quả giữ {n_left} dòng; nếu nối với bảng trung gian (đã gộp) thì ghi bảng đó vào "
-            f"AGENT_OUTPUT_DIR và khai file đó trong check join")
+    joins = [i for i, c in enumerate(all_checks) if c.type == "join"]
+    others = _other_tables(check, input_dir, work_dir)
+    owners = {"join": [], "other": [], "unknown": []}
+    for i, c in row_counts:
+        if c.after == n_left:
+            owners[_row_count_owner(c, i, check, pos, joins, others)].append(c.label)
+    if owners["join"]:
+        return "error", (f"check join '{check.label}' khai báo nối với {check.right} làm tăng lên {expected} dòng, nhưng "
+                         f"check row_count '{owners['join'][0]}' của phép nối này ghi {n_left} → {n_left} dòng. Sửa cho "
+                         f"đúng phép nối thật: nếu nối làm tăng dòng thì row_count ghi số dòng sau nối và khai "
+                         f"expected_ratio; nếu nối với bảng đã gộp thì ghi bảng đó vào AGENT_OUTPUT_DIR và khai file đó "
+                         f"trong check join")
+    if owners["unknown"]:
+        labels = ", ".join(f"'{x}'" for x in owners["unknown"])
+        return "flag", (f"check join dự báo {expected} dòng, nhưng row_count {labels} ghi {n_left} → {n_left} dòng và không "
+                        f"rõ có phải của phép nối này không")
+    return None
 
 
 def grade_meta(meta, step, input_dir, work_dir):
@@ -157,7 +220,7 @@ def grade_meta(meta, step, input_dir, work_dir):
                       f"(mỗi ý cần ít nhất một check custom)")
 
     checks, cache = [], {}
-    for c in parsed.checks:
+    for pos, c in enumerate(parsed.checks):
         label = c.name if c.type == "custom" else c.label
         try:
             result = _grade_check(c, input_dir, work_dir, cache)
@@ -167,11 +230,12 @@ def grade_meta(meta, step, input_dir, work_dir):
         except Exception as e:  # noqa: BLE001  khong de sap; chi ghi ten loi (thong bao co the chua gia tri)
             result = make_result(label, False, f"không chấm được: {type(e).__name__}")
             errors.append(f"check '{label}' ({c.type}) không chấm được: {type(e).__name__}")
-        if c.type == "join":
-            mismatch = _join_declaration_mismatch(c, result, parsed.checks)
-            if mismatch:
-                errors.append(mismatch)
         checks.append(to_ledger_check(result))
+        mismatch = _join_declaration_mismatch(c, pos, result, parsed.checks, input_dir, work_dir) if c.type == "join" else None
+        if mismatch and mismatch[0] == "error":
+            errors.append(mismatch[1])
+        elif mismatch:
+            checks.append(to_ledger_check(make_result(f"{label} (đối chiếu row_count)", False, mismatch[1])))
 
     flags = [f"{c['name']}: {c['reason']}" for c in checks if c["status"] == "flag"]
     return GradeResult(ok=not errors, structural_errors=errors, result_summary=dict(parsed.result_summary),

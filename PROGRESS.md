@@ -410,7 +410,19 @@ Vòng 5, chẩn đoán `python main.py bai2 --redo R13 --note ...` (mã 3, dừn
 - Note có trong prompt cả 4 lần: dựng lại prompt trùng `prompt_hash` ở lần 1, 3, 4; lần 2 khác hash chỉ vì stderr chứa đường dẫn thư mục tạm.
 - Hồ sơ: phase loop, `redo_notes` còn Q4, Q5; R13 superseded, R15 stale; local không có `report/`, R2 còn báo cáo cũ. Mã 3 đúng bảng mã.
 - Đã thêm: `step_attempt` có `failure` (kind, reason, stderr đã che, structural_errors), màn hình in lý do một dòng ở mỗi lần chưa đạt.
-- Việc tiếp theo: sửa `_join_declaration_mismatch` (mục đầu của [BACKLOG.md](BACKLOG.md)) rồi mới chạy `python main.py bai2`.
+
+Vòng 6, sửa lỗi chặn nhầm ở Q4:
+- `_join_declaration_mismatch` chỉ xét `row_count` before = after = số dòng trái, và phân loại theo nhãn (`_row_count_owner`, đối chiếu nhãn thật của
+  bài 0a, 1, 2): có từ nối (`JOIN_LABEL_WORDS`) và thuộc phép nối này là lỗi cấu trúc; nhãn chỉ nêu một bảng, kể cả bảng trái (`order`, `touch_df`) hoặc
+  nêu bảng khác thì bỏ qua; nêu cả hai bảng mà không có từ nối, hoặc không nêu gì, thì thêm cờ `<join> (đối chiếu row_count)`. Nhãn chỉ có từ nối thuộc
+  join gần nhất trong meta; cách đều hai join thì thành cờ. Có `row_count` before = số dòng trái và after lớn hơn thì coi là đã khai, không xét tiếp.
+- Bảng trái đứng một mình bị bỏ qua, khác câu "cùng bảng trái" của yêu cầu, vì đó chính là tình huống Q4 lần 2 (nhãn `order`).
+- Thông báo lỗi nêu tên check join và check row_count, bỏ câu "bảng trung gian", nêu cách khai join nổ dòng. Runner nhận ra meta ghi sai chỗ (ở `work/` hoặc
+  cwd, tên có "meta" hoặc đủ khóa của meta) và báo `meta_error`, không chấm file đó. `error_feedback` có tóm tắt các lần trước, đặt trước lỗi mới nhất vì bản cắt giữ phần cuối.
+- `run_code(..., accept=)`: vòng lặp chấm meta trong thư mục tạm, chưa đạt thì không chép gì về `work/`. Lần thử sau không còn đọc được file của lần rớt.
+- 7 file rớt của Q4 chuyển sang `work/_superseded/20261031_201606_853171/` (sự kiện `archive_failed_attempts`), không xóa gì trên R2.
+- Chạy lại code thật trong thư mục tạm: lần 2, 3 đều đạt, 47.770 đơn; lần 3 thêm cờ đối chiếu vì nhãn `orders and touches cleaned` nêu cả hai bảng.
+- Chưa sửa contract: AI vẫn có thể khai row_count no-op, chỉ là không còn bị chặn. Việc tiếp theo: người dùng chạy `python main.py bai2`.
 
 ## Quyết định đã chốt
 - Cờ info (31/10/2026): không sửa. Thiết kế 7.2 quy định cờ info không tạo điểm dừng riêng, chỉ liệt kê ở điểm dừng xử lý bất

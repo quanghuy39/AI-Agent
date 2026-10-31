@@ -75,7 +75,6 @@ class Context:
     problem: str
     summary: dict                     # ket qua build_data_summary
     ledger: Ledger
-    input_dir: Path                   # cache/input/<task>/ (runner da dong bo voi R2)
     work_dir: Path                    # output/<task>/work/
     masked_values: set = field(default_factory=set, repr=False)
     decisions: list = field(default_factory=list)   # dong "- D1 [kind] text" da xac nhan
@@ -155,9 +154,7 @@ def load_context(task, sensitive=None):
         summary = build_data_summary(report, sensitive=columns, max_chars=config.SUMMARY_MAX_CHARS)
     except ValueError as e:  # bang/cot trong --sensitive khong ton tai
         raise StopLoop(f"Cột che không hợp lệ: {e}") from None
-    prefix = f"{r2.get_r2_settings()['R2_INPUT_PREFIX']}{task}/"
-    ctx = Context(task=task, problem=problem, summary=summary, ledger=led, input_dir=r2.CACHE_DIR / prefix,
-                  work_dir=runner.OUTPUT_DIR / task / "work",
+    ctx = Context(task=task, problem=problem, summary=summary, ledger=led, work_dir=runner.OUTPUT_DIR / task / "work",
                   masked_values=_masked_values(report, summary["masked_columns"]), sensitive=columns, report=report,
                   decisions=[_decision_line(d) for d in led.decisions() if d.status == DecisionStatus.CONFIRMED])
     led.log_event("analysis", "load_context", inputs={"task": task},
@@ -646,6 +643,13 @@ def _failure_record(ctx, run, grade):
             "structural_errors": [ctx.mask(e) for e in (grade.structural_errors if grade else [])]}
 
 
+def _with_history(history, error):
+    """error_feedback cua lan goi lai: tom tat cac lan truoc roi loi moi nhat (cat bot thi giu phan cuoi, tuc loi moi nhat)."""
+    if not history:
+        return error
+    return "Lỗi các lần trước, đừng lặp lại:\n" + "\n".join(history) + f"\n\nLỗi của lần vừa rồi:\n{error}"
+
+
 def _work_files(ctx, max_files=None):
     """Dong liet ke file trong work/ cho AI; bo _superseded/ (runner cung khong chep thu muc nay).
     max_files: chi giu file moi nhat."""
@@ -795,18 +799,30 @@ def _flag_stop(ctx, q, entry, flagged, can_correct, yes, ask_user):
     return answer
 
 
+def _run_step(ctx, step, step_name):
+    """Chay code, cham meta trong thu muc tam cua runner; (run, grade). Chua dat thi file khong ve output/, khong len R2."""
+    graded = {}
+
+    def accept(run, input_dir, work_dir):
+        graded["grade"] = grade_meta(run.meta, step, input_dir, work_dir) if run.meta is not None else None
+        return graded["grade"] is not None and graded["grade"].ok
+
+    run = runner.run_code(step.code, ctx.task, step_name, accept=accept)
+    return run, graded.get("grade")
+
+
 def _solve_attempts(ctx, q, results_by_key, max_retries, yes, ask_user):
     """Goi AI, chay code, cham meta toi khi dat roi ghi so; tra ve (entry, ten cac check co co). Het so lan thu -> StopLoop."""
     step_name = f"{_next_result_id(ctx.ledger)}_{q.key}"
-    feedback = ""
+    feedback = last_error = ""
+    history = []
     use_cache = q.key not in _redo_notes(ctx)  # chay lai: khong lay lai dung cau tra loi cu khi prompt trung
     for attempt in range(1, max_retries + 2):
         step = _call(ctx, _step_prompt(ctx, q, results_by_key, feedback), AnalysisStep, use_cache=use_cache)
         if step.cannot_answer_reason:
             ctx.ledger.add_open_item(f"{q.key}: AI báo không trả lời được: {step.cannot_answer_reason}")
             raise StopLoop(f"{q.key}: AI báo không trả lời được.")
-        run = runner.run_code(step.code, ctx.task, step_name)
-        grade = grade_meta(run.meta, step, ctx.input_dir, ctx.work_dir) if run.ok and run.meta is not None else None
+        run, grade = _run_step(ctx, step, step_name)
         ok = grade is not None and grade.ok
         failure = None if ok else _failure_record(ctx, run, grade)
         ctx.ledger.log_event("analysis", "step_attempt", inputs={"question": q.key, "attempt": attempt},
@@ -816,11 +832,13 @@ def _solve_attempts(ctx, q, results_by_key, max_retries, yes, ask_user):
                                     **({"failure": failure} if failure else {})})
         if ok:
             return _record(ctx, q, step, run, grade, results_by_key, yes, ask_user)
-        feedback = ctx.mask(build_feedback(run, grade))
+        last_error = ctx.mask(build_feedback(run, grade))
+        feedback = _with_history(history, last_error)
         reason = failure["reason"][:config.ANALYSIS_FAILURE_LINE_CHARS]
+        history.append(f"- Lần {attempt} ({failure['kind']}): {reason}")
         print(f"{q.key}: lần {attempt} chưa đạt ({failure['kind']}): {reason}. Gửi lại lỗi cho AI.")
     ctx.ledger.add_open_item(f"{q.key}: không giải được sau {max_retries + 1} lần thử. Lỗi cuối: "
-                             f"{feedback[:300]}")
+                             f"{last_error[:300]}")
     raise StopLoop(f"{q.key}: hết {max_retries} lần thử lại.")
 
 
