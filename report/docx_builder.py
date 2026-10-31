@@ -206,6 +206,7 @@ class _Report:
         self.doc, self.record, self.ledger, self.charts, self.mask = doc, record, ledger, charts, mask
         self.labels = record.get("column_labels") or {}
         self.n_tables = self.n_figures = 0
+        self.tables, self.figures = {}, {}  # bang, hinh da hien: {khoa: so thu tu}
         self.errors = []
 
     def text(self, value, style=None):
@@ -272,6 +273,28 @@ class _Report:
         self._caption(f"Hình {self.n_figures}: {chart_title(ChartSpec.model_validate(ins['chart']), self.labels)}", False)
 
 
+    def visuals(self, ins):
+        """Chen bang, hinh cua insight; cai da hien o insight truoc thi khong chen lai, chi tro ve."""
+        table, chart = ins.get("table"), ins.get("chart")
+        shown = []
+        if table:
+            key = (table["file"], frozenset(table["columns"]))
+            if key in self.tables:
+                shown.append(f"Bảng {self.tables[key]}")
+            else:
+                self.data_table(ins)
+                self.tables[key] = self.n_tables
+        if chart:
+            key = (chart["type"], chart["file"], chart["x"], tuple(chart["y"]), chart.get("series"))
+            if key in self.figures:
+                shown.append(f"Hình {self.figures[key]}")
+            else:
+                self.figure(ins)
+                self.figures[key] = self.n_figures
+        if shown:
+            self._small(f"Xem {' và '.join(shown)} ở trên.")
+
+
 def report_title(problem, fallback):
     """Dong tieu de dau tien cua de, bo dau # va tien to "Bài ...:"."""
     for line in (problem.get("problem") or "").splitlines():
@@ -315,10 +338,7 @@ def _results(rep):
             visual = bool(ins.get("table") or ins.get("chart"))  # doan van va nhan khong bi tach khoi bang, hinh
             rep.text(ins["text_filled"]).paragraph_format.keep_with_next = visual
             rep.label(ins["label"], visual)
-            if ins.get("table"):
-                rep.data_table(ins)
-            if ins.get("chart"):
-                rep.figure(ins)
+            rep.visuals(ins)
 
 
 def _names_result(decision):

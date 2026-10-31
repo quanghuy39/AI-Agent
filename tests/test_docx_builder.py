@@ -365,6 +365,57 @@ def test_sort_happens_before_cut(led):
     assert first_column(led, frame)[:2] == ["N49", "N48"]
 
 
+# khong lap bang, hinh
+def repeated(led, first, second):
+    doc = built(led, {**RECORD, "insights": [insight(1, 1, **first), insight(2, 2, **second)]})
+    notes = [p.text for p in doc.paragraphs if p.text.startswith("Xem ")]
+    return doc, notes, [t for t in styled(doc, "Caption")]
+
+
+def test_same_table_and_chart_not_repeated(led):
+    doc, notes, captions = repeated(led, {"table": TABLE, "chart": CHART}, {"table": TABLE, "chart": CHART})
+    assert notes == ["Xem Bảng 1 và Hình 1 ở trên."]
+    assert len(captions) == 2 and len(doc.tables) == 2 and len(doc.inline_shapes) == 1
+
+
+def test_only_repeated_visual_is_named(led):
+    assert repeated(led, {"table": TABLE}, {"table": TABLE, "chart": CHART})[1] == ["Xem Bảng 1 ở trên."]
+    assert repeated(led, {"chart": CHART}, {"table": TABLE, "chart": CHART})[1] == ["Xem Hình 1 ở trên."]
+
+
+def test_same_columns_in_other_order_or_sort_counts_as_same_table(led):
+    other = {**TABLE, "columns": list(reversed(TABLE["columns"])), "sort": {"by": "total", "desc": False}}
+    assert repeated(led, {"table": TABLE}, {"table": other})[1] == ["Xem Bảng 1 ở trên."]
+
+
+def test_different_columns_shown_again(led):
+    other = {**TABLE, "columns": ["group", "total"]}
+    doc, notes, _ = repeated(led, {"table": TABLE}, {"table": other})
+    assert notes == [] and len(doc.tables) == 3
+
+
+def test_chart_differing_only_in_ai_title_counts_as_same(led):
+    assert repeated(led, {"chart": CHART}, {"chart": {**CHART, "title": "Khác"}})[1] == ["Xem Hình 1 ở trên."]
+
+
+def test_different_chart_shown_again(led):
+    doc, notes, _ = repeated(led, {"chart": CHART}, {"chart": {**CHART, "type": "line"}})
+    assert notes == [] and len(doc.inline_shapes) == 2
+
+
+def test_numbering_continues_after_repeat(led):
+    other = {**TABLE, "columns": ["group", "total"]}
+    record = {**RECORD, "insights": [insight(1, 1, table=TABLE), insight(2, 1, table=TABLE), insight(3, 2, table=other)]}
+    assert [c[:6] for c in styled(built(led, record), "Caption")] == ["Bảng 1", "Bảng 2"]
+
+
+def test_repeated_auto_chart_not_repeated(led):
+    pd.DataFrame({"group": ["A", "B"], "total": [1, 2]}).to_csv(led.root / "work" / "by_group.csv", index=False)
+    table = {"file": "by_group.csv", "columns": ["group", "total"]}
+    doc, notes, _ = repeated(led, {"table": table}, {"table": table})
+    assert notes == ["Xem Bảng 1 và Hình 1 ở trên."] and len(doc.inline_shapes) == 1
+
+
 # anh va kiem cuoi
 def test_picture_embedded(led):
     assert len(built(led).inline_shapes) == 1

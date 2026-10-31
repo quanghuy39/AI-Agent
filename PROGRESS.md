@@ -336,6 +336,8 @@ Sau lần chạy thật `bai0a` (số liệu đúng, đã xem Word):
   chuyển `PermissionError` thành `ReportLocked`.
 - Tiêu đề biểu đồ (trong ảnh, chú thích Hình n) do `charts.chart_title` sinh từ `column_labels`. `ChartSpec.title` giữ lại cho
   `insights.json` cũ nhưng không hiển thị, không kiểm, prompt không yêu cầu nữa.
+- Word không lặp bảng, hình: cùng file và cùng tập cột (bảng), cùng type, file, x, y, series (hình) với insight trước thì chỉ ghi
+  "Xem Bảng n và Hình m ở trên.", nêu cái đã có. Dàn ý slide vẫn giữ hình cho từng insight.
 
 ## Quyết định đã chốt
 - Prompt analysis trong `skills/analysis/` là nguồn duy nhất cho cả bộ kiểm định lẫn agent: kiểm định đo đúng
