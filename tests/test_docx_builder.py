@@ -416,6 +416,23 @@ def test_repeated_auto_chart_not_repeated(led):
     assert notes == ["Xem Bảng 1 và Hình 1 ở trên."] and len(doc.inline_shapes) == 1
 
 
+# limitations
+@pytest.mark.parametrize("text", ["Không có hạn chế đáng kể ngoài các giả định ở mục sáu.", "  Không có hạn chế đáng kể.",
+                                  config.REPORT_NO_LIMITATIONS])
+def test_no_limitations_variants_become_fixed_sentence(led, text):
+    doc = built(led, {**RECORD, "limitations_filled": text})
+    assert [p.text for p in doc.paragraphs][-1] == config.REPORT_NO_LIMITATIONS
+
+
+@pytest.mark.parametrize("text", ["Dữ liệu chỉ có một năm.", "Có hạn chế đáng kể về phạm vi."])
+def test_real_limitations_kept(led, text):
+    assert [p.text for p in built(led, {**RECORD, "limitations_filled": text}).paragraphs][-1] == text
+
+
+def test_fixed_sentence_starts_with_prefix():
+    assert config.REPORT_NO_LIMITATIONS.startswith(config.REPORT_NO_LIMITATIONS_PREFIX)
+
+
 # anh va kiem cuoi
 def test_picture_embedded(led):
     assert len(built(led).inline_shapes) == 1

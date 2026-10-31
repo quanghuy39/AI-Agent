@@ -317,6 +317,11 @@ def _results(rep):
             rep.visuals(ins)
 
 
+def _limitations(text):
+    """AI viet lech cau co dinh (vd. "muc sau"): dua ve dung nguyen van."""
+    return config.REPORT_NO_LIMITATIONS if text.strip().startswith(config.REPORT_NO_LIMITATIONS_PREFIX) else text
+
+
 def _names_result(decision):
     """Decision "chap nhan R.. du co co": co ma ket qua nen chi hien o muc 6, muc giu ma de truy vet."""
     return (decision.source_key or "").startswith(ACCEPT_FLAGS_KEY)
@@ -390,7 +395,7 @@ def build_document(record, ledger, charts, task, profile, mask=str, today=None):
     rep.heading(HEADINGS[5], 1)
     _method_section(rep)
     rep.heading(HEADINGS[6], 1)
-    rep.text(record["limitations_filled"])
+    rep.text(_limitations(record["limitations_filled"]))
 
     if "{{" in _all_text(doc):
         rep.errors.append("Báo cáo còn placeholder chưa điền.")

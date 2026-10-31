@@ -125,7 +125,8 @@ REPORT_SYNTH_MAX_RETRIES = 2         # so lan gui lai AI kem danh sach loi, sau 
 REPORT_FEEDBACK_MAX_ERRORS = 20      # so loi toi da trong moi lan gui lai
 REPORT_CONCLUSION_MAX_SIMILARITY = 0.8  # conclusion giong summary hon ty le nay thi gui lai AI
 # Cau duy nhat duoc co chu so ngoai placeholder; phai trung nguyen van voi skills/report/synthesize.md
-REPORT_NO_LIMITATIONS = "Không có hạn chế đáng kể ngoài các giả định ở mục 6."
+REPORT_NO_LIMITATIONS_PREFIX = "Không có hạn chế đáng kể"  # limitations bat dau the nay: Word in nguyen cau duoi
+REPORT_NO_LIMITATIONS = f"{REPORT_NO_LIMITATIONS_PREFIX} ngoài các giả định ở mục 6."
 REPORT_TABLE_MAX_COLUMNS = 40        # so ten cot toi da cua moi bang ket qua dua vao prompt
 REPORT_TABLE_SHOW_COLUMNS = 6        # so cot toi da AI chon hien thi cho mot bang
 REPORT_SUBDIR = "report"             # trong output/<bai>/: bieu do, Word, ho so, slides_outline

@@ -340,6 +340,7 @@ Sau lần chạy thật `bai0a` (số liệu đúng, đã xem Word):
   "Xem Bảng n và Hình m ở trên.", nêu cái đã có. Dàn ý slide vẫn giữ hình cho từng insight.
 - Bar dùng chung `tables.ordered` với bảng Word (dùng đặc tả bảng của cùng insight nếu cùng file), bảng và hình cùng thứ tự; cột
   thời gian giữ thứ tự file. Cắt top nhóm của bar giữ thứ tự đó.
+- Word: `limitations` bắt đầu bằng "Không có hạn chế đáng kể" thì in đúng `config.REPORT_NO_LIMITATIONS`; `insights.json` không đổi.
 
 ## Quyết định đã chốt
 - Prompt analysis trong `skills/analysis/` là nguồn duy nhất cho cả bộ kiểm định lẫn agent: kiểm định đo đúng
@@ -370,6 +371,8 @@ Sau lần chạy thật `bai0a` (số liệu đúng, đã xem Word):
   `ANALYSIS_DEFAULT_SENSITIVE`.
 - Ngày 8 bỏ chạy container và bài 1.
 - Decision trùng ý (D6, D7 `bai0a`) ở pha giải.
+- AI né luật chữ số bằng số viết chữ ("mục sáu").
+- Diễn đạt vụng ở I3 `bai0a`.
 - R2 `output/<bài>/work/` còn file cũ của lần chạy trước `--restart` (đồng bộ không xóa): cần xử lý nếu tải hồ sơ từ R2 về.
 - Manifest đồng bộ chỉ ở máy này: máy khác hoặc container mới sẽ tải lại toàn bộ; object bị xóa tay trên R2 không được tải
   lại cho tới khi file đổi.
