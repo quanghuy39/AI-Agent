@@ -115,6 +115,7 @@ def _build_outputs(ctx):
     led.close_open_items_with_text(REPORT_OPEN_ITEM)
     print(f"Báo cáo: {outputs['docx']}")
     print(f"Hồ sơ bài toán: {outputs['case']}")
+    print(f"Dàn ý slide: {outputs['outline']}")
 
 
 # ---------- ma thoat ----------

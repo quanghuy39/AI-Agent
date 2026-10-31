@@ -3,6 +3,7 @@
 Chay: python -m pytest tests/test_docx_builder.py -v
 """
 
+import json
 from datetime import date
 
 import docx
@@ -16,6 +17,7 @@ from ledger import Ledger, Phase
 from report.build import build_report
 from report.charts import ChartError
 from report.docx_builder import HEADINGS, ReportError, _shorten, build_document, report_title, save_document
+from report.slides_outline import build_outline
 
 TASK = "bai0a"
 PASS = [{"name": "c", "status": "pass"}]
@@ -302,6 +304,52 @@ def test_case_file_not_written_when_word_fails(led):
     with pytest.raises(ReportError):
         build_report(led, TASK, {**RECORD, "summary_filled": "{{R1.n}}"}, PROFILE)
     assert not (led.root / "report" / f"ho_so_{TASK}.md").exists()
+
+
+# dan y slide
+def outline_of(led, record=RECORD, mask=str):
+    return json.loads(build_report(led, TASK, record, PROFILE, mask)["outline"].read_text(encoding="utf-8"))["slides"]
+
+
+def test_outline_order_and_fields(led):
+    slides = outline_of(led)
+    assert [s["type"] for s in slides] == ["title", "summary", "insight", "insight", "conclusion"]
+    assert slides[0]["title"] == "Cơ cấu sản phẩm theo nhóm" and slides[1]["bullets"] == ["Tóm tắt đạt 1.250."]
+    first, second = slides[2], slides[3]
+    assert first == {"type": "insight", "title": "Số sản phẩm", "bullets": ["Nhận định 1 là 1.250."],
+                     "chart": "report/charts/I1.png", "result_ids": ["R1"], "label": "verified"}
+    assert second["chart"] is None and second["label"] == "hypothesis"
+    assert slides[-1]["bullets"] == ["Kết luận rõ."]
+
+
+def test_outline_chart_path_exists(led):
+    assert (led.root / outline_of(led)[2]["chart"]).is_file()
+
+
+def test_outline_splits_sentences_not_numbers(led):
+    record = {**RECORD, "conclusion_filled": "Đạt 1.234,5 đơn. Tăng rõ! Còn gì?"}
+    assert outline_of(led, record)[-1]["bullets"] == ["Đạt 1.234,5 đơn.", "Tăng rõ!", "Còn gì?"]
+
+
+def test_outline_placeholder_stops(led):
+    charts = {}
+    with pytest.raises(ReportError, match="Dàn ý slide còn placeholder"):
+        build_outline({**RECORD, "conclusion_filled": "{{R1.n}}"}, charts, "T", led.root)
+
+
+def test_outline_masks_values(led):
+    record = {**RECORD, "conclusion_filled": "Khách BIMAT."}
+    assert "BIMAT" not in json.dumps(outline_of(led, record, lambda s: s.replace("BIMAT", "[đã che]")))
+
+
+def test_nothing_written_when_outline_fails(led, monkeypatch):
+    def fail(*a, **k):
+        raise ReportError("x")
+
+    monkeypatch.setattr("report.build.build_outline", fail)
+    with pytest.raises(ReportError):
+        build_report(led, TASK, RECORD, PROFILE)
+    assert not list((led.root / "report").glob("bao_cao_*")) and not (led.root / "report" / "slides_outline.json").exists()
 
 
 # phu tro
