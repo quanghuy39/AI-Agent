@@ -138,11 +138,15 @@ REPORT_TABLE_MAX_ROWS = 15
 REPORT_SUMMARY_MAX_CHARS = 1500      # khoang nua trang
 # Cot so co tu nay trong ten la ma, khong phai so do: giu nguyen, khong ngan nghin (2024 khong thanh 2.024)
 REPORT_PLAIN_NUMBER_HINTS = ("year", "nam", "id", "code", "ma", "key")
+REPORT_CODE_COLUMN_HINTS = ("id", "code", "ma", "key")  # cot ma; di cung cot ten thi bieu do dung cot ten
+# Cot thoi gian: khong xep lai theo gia tri, thu tu trong file da co nghia
+REPORT_TIME_COLUMN_HINTS = ("date", "time", "year", "month", "quarter", "week", "period", "ngay", "thang", "nam", "quy", "tuan", "ky")
 # Bieu do (Ngay 7)
 REPORT_CHART_FONT_FALLBACK = "DejaVu Sans"  # khi may khong co REPORT_FONT (vd. container); co du dau tieng Viet
 REPORT_CHART_DPI = 200
 REPORT_CHART_SIZE = (10, 5.625)      # inch, ty le 16:9
 REPORT_CHART_MAX_Y = 4               # so cot so toi da cua mot bieu do
+REPORT_AUTO_CHART_MAX_ROWS = 20      # bieu do du phong chi ve bang khong qua so dong nay
 REPORT_CHART_MAX_GROUPS = 20         # nhieu hon so nhom nay thi chi ve REPORT_CHART_TOP_GROUPS nhom lon nhat
 REPORT_CHART_TOP_GROUPS = 15
 REPORT_CHART_LABEL_MAX_BARS = 15     # bar: nhieu cot hon thi bo nhan gia tri; line: so nhan toi da tren truc x

@@ -7,10 +7,27 @@ from pathlib import Path
 
 import pandas as pd
 import pyarrow.parquet as pq
+from pandas.api.types import is_bool_dtype, is_datetime64_any_dtype, is_numeric_dtype
 
+import config
+from profiling import quality
 from storage import r2
 
 TABLE_SUFFIXES = (".csv", ".parquet")
+
+
+def name_has(name, hints):
+    """Ten cot co mot tu thuoc hints (tach tu theo _ - khoang trang va camelCase)."""
+    return bool({w.lower() for w in quality.name_words(str(name))} & set(hints))
+
+
+def is_measure(name, column):
+    """Cot so do: can phai, dinh dang so. Cot so mang nghia ma (nam, id) giu nguyen de khong in 2024 thanh 2.024."""
+    return is_numeric_dtype(column) and not is_bool_dtype(column) and not name_has(name, config.REPORT_PLAIN_NUMBER_HINTS)
+
+
+def is_time_column(name, column):
+    return is_datetime64_any_dtype(column) or name_has(name, config.REPORT_TIME_COLUMN_HINTS)
 
 
 def _read_csv(path, **kwargs):

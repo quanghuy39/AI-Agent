@@ -1,7 +1,7 @@
 """Dung bo bao cao tu insights.json vao output/<bai>/report/. Khong goi AI. Tra ve {ten: duong dan}."""
 
 import config
-from report.charts import draw_charts
+from report.charts import draw_charts, with_auto_charts
 from report.docx_builder import build_document, report_title, save_document
 from report.slides_outline import build_outline, save_outline
 
@@ -10,6 +10,7 @@ def build_report(ledger, task, record, profile, mask=str):
     """Ve bieu do, dung Word, ho so bai toan, dan y slide. Loi: ChartError hoac ReportError, khong ghi file nao ngoai
     bieu do: Word va dan y duoc dung va kiem xong moi ghi."""
     folder = ledger.root / config.REPORT_SUBDIR
+    record = with_auto_charts(record, ledger, mask)
     charts = draw_charts(record, ledger, mask)
     document = build_document(record, ledger, charts, task, profile, mask)
     slides = build_outline(record, charts, report_title(ledger.get_problem() or {}, task), ledger.root, mask)

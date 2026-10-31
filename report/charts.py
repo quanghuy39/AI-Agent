@@ -1,6 +1,7 @@
 """Bieu do cho bao cao: kiem tra phan table/chart cua ban tong hop va ve PNG. Chi code, moi so lay tu file bang.
 
 x (cung series neu co) phai duy nhat tung dong: code khong tu cong gop, vi cot ty le cong lai se ra so sai.
+Insight co table ma AI khong dat chart: with_auto_charts tu them bar khi bang chi co mot chieu (xem auto_chart).
 Mau theo thu tu co dinh config.REPORT_CHART_PALETTE; them nhom thi gop vao "Khác", khong sinh mau moi.
 """
 
@@ -15,7 +16,7 @@ from pandas.api.types import is_bool_dtype, is_numeric_dtype
 import config
 from ledger import ResultStatus
 from report.placeholders import format_value
-from report.tables import load_table, result_tables
+from report.tables import is_measure, is_time_column, load_table, name_has, result_tables
 from skills.report.schemas import ChartSpec
 
 CHART_TYPES = ("bar", "line", "stacked_bar")
@@ -157,6 +158,49 @@ def _limit(frame, spec, y_label):
     return frame, " ".join(notes)
 
 
+# ---------- bieu do du phong ----------
+
+def _label_column(columns):
+    """Cot nhan: mot cot chu, hoac ma + ten thi lay ten. Hai cot chu khac (bang nhieu chieu) -> None."""
+    if len(columns) == 1:
+        return columns[0]
+    names = [c for c in columns if not name_has(c, config.REPORT_CODE_COLUMN_HINTS)]
+    return names[0] if len(columns) == 2 and len(names) == 1 else None
+
+
+def auto_chart(ins, ledger, labels=None, mask=str):
+    """Dac ta bar cho insight co table ma khong co chart; None neu bang khong du dieu kien: dung mot cot nhan (hoac ma +
+    ten) va mot cot so, tu hai toi REPORT_AUTO_CHART_MAX_ROWS dong, nhan khong trung."""
+    spec = ins.get("table")
+    table = tables_of(ledger, ins["result_ids"]).get(spec["file"]) if spec and not ins.get("chart") else None
+    if table is None or table["columns"] is None or not set(spec["columns"]) <= set(table["columns"]):
+        return None
+    df = load_table(table["path"])
+    measures = [c for c in spec["columns"] if is_measure(c, df[c])]
+    x = _label_column([c for c in spec["columns"] if c not in measures])
+    if x is None or len(measures) != 1 or not 2 <= len(df) <= config.REPORT_AUTO_CHART_MAX_ROWS:
+        return None
+    if _keys(df[x], mask).duplicated().any():
+        return None
+    labels = labels or {}
+    return {"type": "bar", "file": spec["file"], "x": x, "y": measures, "series": None,
+            "title": f"{labels.get(measures[0], measures[0])} theo {labels.get(x, x)}"}
+
+
+def with_auto_charts(record, ledger, mask=str):
+    """Ban sao record, them chart du phong cho insight du dieu kien, danh dau chart_auto. insights.json khong doi: day
+    la cach trinh bay do code chon, chay lai cho ket qua nhu nhau."""
+    insights = []
+    for ins in record["insights"]:
+        chart = auto_chart(ins, ledger, record.get("column_labels"), mask)
+        if chart:
+            ledger.log_event("report", "auto_chart", extra={"insight": ins["id"], "file": chart["file"], "x": chart["x"],
+                                                            "y": chart["y"]})
+            ins = {**ins, "chart": chart, "chart_auto": True}
+        insights.append(ins)
+    return {**record, "insights": insights}
+
+
 # ---------- ve ----------
 
 def _font():
@@ -219,11 +263,14 @@ def _draw_lines(ax, frame):
     ax.tick_params(axis="x", labelrotation=30)
 
 
-def draw_chart(spec, path, out_path, labels=None, mask=str):
-    """Ve mot bieu do ra PNG out_path."""
+def draw_chart(spec, path, out_path, labels=None, mask=str, descending=False):
+    """Ve mot bieu do ra PNG out_path. descending: xep nhom theo cot so dau tien, giam dan."""
     labels = labels or {}
     y_label = labels.get(spec.y[0], spec.y[0]) if len(spec.y) == 1 else ""
-    frame, note = _limit(_frame(load_table(path), spec, labels, mask), spec, y_label or "tổng")
+    df = load_table(path)
+    frame, note = _limit(_frame(df, spec, labels, mask), spec, y_label or "tổng")
+    if descending and not is_time_column(spec.x, df[spec.x]):
+        frame = frame.sort_values(by=frame.columns[0], ascending=False, kind="stable")
     if frame.empty:
         raise ChartError(f"{spec.file} không có dòng nào để vẽ.")
     with rc_context({"font.family": _font(), "font.size": 11, "axes.unicode_minus": False}):
@@ -260,7 +307,7 @@ def draw_charts(record, ledger, mask=str):
             raise ChartError(f"{ins['id']}: không tìm thấy bảng {spec.file}.")
         out_path = ledger.root / config.REPORT_SUBDIR / CHARTS_DIR / f"{ins['id']}.png"
         try:
-            draw_chart(spec, table["path"], out_path, record.get("column_labels"), mask)
+            draw_chart(spec, table["path"], out_path, record.get("column_labels"), mask, bool(ins.get("chart_auto")))
         except (KeyError, ValueError) as e:
             raise ChartError(f"{ins['id']}: không vẽ được từ {spec.file} ({type(e).__name__}: {e}).") from None
         drawn[ins["id"]] = out_path

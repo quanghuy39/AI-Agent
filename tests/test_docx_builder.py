@@ -386,6 +386,23 @@ def test_nothing_written_when_outline_fails(led, monkeypatch):
     assert not list((led.root / "report").glob("bao_cao_*")) and not (led.root / "report" / "slides_outline.json").exists()
 
 
+# bieu do du phong trong bao cao
+def test_auto_chart_appears_in_word_and_outline(led):
+    pd.DataFrame({"group": ["A", "B"], "total": [1, 2]}).to_csv(led.root / "work" / "by_group.csv", index=False)
+    table = {"file": "by_group.csv", "columns": ["group", "total"]}
+    record = {**RECORD, "insights": [insight(1, 1, table=table), insight(2, 2)]}
+    outputs = build_report(led, TASK, record, PROFILE)
+    doc = docx.Document(outputs["docx"])
+    assert len(doc.inline_shapes) == 1 and "Hình 1: Tổng tiền theo Nhóm hàng" in styled(doc, "Caption")
+    slides = json.loads(outputs["outline"].read_text(encoding="utf-8"))["slides"]
+    assert slides[2]["chart"] == "report/charts/I1.png"
+    assert "chart_auto" not in json.dumps(led.get_insights() or {})
+
+
+def test_multi_dimension_table_gets_no_auto_chart(led):
+    assert len(built(led, {**RECORD, "insights": [insight(1, 1, table=TABLE), insight(2, 2)]}).inline_shapes) == 0
+
+
 # phu tro
 @pytest.mark.parametrize("problem, title", [("# Bài 2: Đánh giá hiệu quả\n\nx", "Đánh giá hiệu quả"), ("\n# Đề khác\n", "Đề khác"),
                                             ("", "bai0a")])

@@ -16,16 +16,14 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
-from pandas.api.types import is_bool_dtype, is_numeric_dtype
 
 import config
 from analysis.loop import ACCEPT_FLAGS_KEY
 from ledger import DecisionStatus, ResultStatus
 from profiling import flags as fl
-from profiling import quality
 from report.charts import _label, tables_of
 from report.placeholders import HYPOTHESIS, VERIFIED, format_value
-from report.tables import load_table
+from report.tables import is_measure, load_table
 
 # decision chap nhan ket luan: co dinh, moi lan tu choi roi tong hop lai dung chung; khong phai gia dinh phan tich
 CONCLUSION_KEY = "accept_conclusion|synthesize"
@@ -162,14 +160,6 @@ def _add_table(doc, headers, rows, right=()):
     return table
 
 
-def _is_measure(name, column):
-    """Cot so do: can phai, dinh dang so. Cot so mang nghia ma (nam, id) giu nguyen de khong in 2024 thanh 2.024."""
-    if not is_numeric_dtype(column) or is_bool_dtype(column):
-        return False
-    words = {w.lower() for w in quality.name_words(str(name))}
-    return not words & set(config.REPORT_PLAIN_NUMBER_HINTS)
-
-
 def _cell_text(value, measure, mask):
     if pd.isna(value):
         return ""
@@ -226,7 +216,7 @@ class _Report:
         headers = [self.labels.get(c, c) for c in spec["columns"]]
         cited = ", ".join(ins["result_ids"])
         self._caption(f"Bảng {self.n_tables}: {', '.join(headers)} (kết quả {cited})", True)
-        measures = [_is_measure(c, df[c]) for c in spec["columns"]]
+        measures = [is_measure(c, df[c]) for c in spec["columns"]]
         top = df.head(config.REPORT_TABLE_MAX_ROWS)
         rows = [[_cell_text(top[c].iloc[i], m, self.mask) for c, m in zip(spec["columns"], measures)]
                 for i in range(len(top))]

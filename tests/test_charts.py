@@ -12,8 +12,21 @@ import config
 import llm
 from analysis import loop
 from ledger import Ledger, Phase
-from report.charts import ChartError, _font, _frame, _limit, _number, draw_chart, draw_charts, validate_visuals
+from report import charts
+from report.charts import (
+    ChartError,
+    _font,
+    _frame,
+    _limit,
+    _number,
+    auto_chart,
+    draw_chart,
+    draw_charts,
+    validate_visuals,
+    with_auto_charts,
+)
 from report.synthesize import synthesize
+from skills.report import load_prompt
 from skills.report.schemas import ChartSpec, SynthesisOutput
 
 TASK = "bai0a"
@@ -241,3 +254,105 @@ def test_empty_table_raises(led):
     pd.DataFrame({"group": [], "total": []}).to_csv(led.root / "work" / "by_group.csv", index=False)
     with pytest.raises(ChartError):
         png_of(led, CHART)
+
+
+# bieu do du phong
+def sales_table(led, name, frame):
+    frame.to_csv(led.root / "work" / name, index=False)
+    led.add_result("B", "m", {}, PASS, output_path=f"work/{name}")
+    return {"id": "I1", "result_ids": [f"R{len(led.results())}"], "chart": None,
+            "table": {"file": name, "columns": list(frame.columns)}}
+
+
+ONE_DIM = pd.DataFrame({"category_name": ["A", "B", "C"], "n": [1, 3, 2]})
+CODE_NAME = pd.DataFrame({"category_id": ["C1", "C2"], "category_name": ["Nước", "Bánh"], "n": [5, 9]})
+
+
+def test_auto_chart_one_label_one_number(led):
+    chart = auto_chart(sales_table(led, "a.csv", ONE_DIM), led, {"n": "Số sản phẩm", "category_name": "Nhóm hàng"})
+    assert chart == {"type": "bar", "file": "a.csv", "x": "category_name", "y": ["n"], "series": None,
+                     "title": "Số sản phẩm theo Nhóm hàng"}
+
+
+def test_auto_chart_code_and_name_uses_name(led):
+    assert auto_chart(sales_table(led, "a.csv", CODE_NAME), led)["x"] == "category_name"
+
+
+def test_auto_chart_numeric_code_counts_as_code(led):
+    frame = pd.DataFrame({"category_id": [1, 2], "category_name": ["A", "B"], "n": [5, 9]})
+    chart = auto_chart(sales_table(led, "a.csv", frame), led)
+    assert (chart["x"], chart["y"]) == ("category_name", ["n"])
+
+
+def test_auto_chart_skips_multi_dimension(led):
+    frame = pd.DataFrame({"category_id": ["C1", "C1"], "category_name": ["A", "A"], "brand": ["X", "Y"], "n": [1, 2]})
+    assert auto_chart(sales_table(led, "a.csv", frame), led) is None
+    two_labels = pd.DataFrame({"category_name": ["A", "A"], "brand": ["X", "Y"], "n": [1, 2]})
+    assert auto_chart(sales_table(led, "b.csv", two_labels), led) is None
+
+
+def test_auto_chart_skips_two_numbers_or_none(led):
+    assert auto_chart(sales_table(led, "a.csv", pd.DataFrame({"g": ["A", "B"], "n": [1, 2], "m": [3, 4]})), led) is None
+    assert auto_chart(sales_table(led, "b.csv", pd.DataFrame({"g": ["A", "B"]})), led) is None
+
+
+@pytest.mark.parametrize("rows, drawn", [(1, False), (2, True), (20, True), (21, False)])
+def test_auto_chart_row_limit(led, rows, drawn):
+    frame = pd.DataFrame({"g": [f"N{i}" for i in range(rows)], "n": range(rows)})
+    assert bool(auto_chart(sales_table(led, "a.csv", frame), led)) == drawn
+
+
+def test_auto_chart_skips_duplicate_labels_and_existing_chart(led):
+    assert auto_chart(sales_table(led, "a.csv", pd.DataFrame({"g": ["A", "A"], "n": [1, 2]})), led) is None
+    ins = sales_table(led, "b.csv", ONE_DIM)
+    assert auto_chart({**ins, "chart": CHART}, led) is None
+    assert auto_chart({**ins, "table": None}, led) is None
+
+
+def test_auto_chart_skips_missing_column(led):
+    ins = sales_table(led, "a.csv", ONE_DIM)
+    assert auto_chart({**ins, "table": {"file": "a.csv", "columns": ["khong_co", "n"]}}, led) is None
+
+
+def test_with_auto_charts_logs_and_leaves_record_unchanged(led):
+    ins = sales_table(led, "a.csv", ONE_DIM)
+    record = {"insights": [ins]}
+    done = with_auto_charts(record, led)
+    assert done["insights"][0]["chart_auto"] and record["insights"][0]["chart"] is None
+    event = [e for e in led.read_log() if e.action == "auto_chart"][-1]
+    assert event.extra == {"insight": "I1", "file": "a.csv", "x": "category_name", "y": ["n"]}
+
+
+def test_no_log_without_auto_chart(led):
+    with_auto_charts({"insights": [{"id": "I1", "result_ids": [], "chart": None}]}, led)
+    assert not [e for e in led.read_log() if e.action == "auto_chart"]
+
+
+def test_auto_chart_is_drawn_descending(led, monkeypatch):
+    seen = {}
+    ins = sales_table(led, "a.csv", ONE_DIM)
+    done = with_auto_charts({"insights": [ins]}, led)
+
+    def spy(spec, path, out, labels, mask, descending):
+        seen["descending"] = descending
+
+    monkeypatch.setattr(charts, "draw_chart", spy)
+    draw_charts(done, led)
+    assert seen == {"descending": True}
+
+
+def test_descending_sorts_groups_and_time_keeps_order(led, monkeypatch):
+    orders = []
+    monkeypatch.setattr(charts, "_draw_bars", lambda ax, frame, spec: orders.append(list(frame.index)) or False)
+    ONE_DIM.to_csv(led.root / "work" / "a.csv", index=False)
+    pd.DataFrame({"month": ["T1", "T2", "T3"], "n": [1, 3, 2]}).to_csv(led.root / "work" / "t.csv", index=False)
+    out = led.root / "report" / "x.png"
+    draw_chart(ChartSpec.model_validate({**CHART, "file": "a.csv", "x": "category_name", "y": ["n"]}),
+               led.root / "work" / "a.csv", out, descending=True)
+    draw_chart(ChartSpec.model_validate({**CHART, "file": "t.csv", "x": "month", "y": ["n"]}),
+               led.root / "work" / "t.csv", out, descending=True)
+    assert orders == [["B", "C", "A"], ["T1", "T2", "T3"]]
+
+
+def test_prompt_suggests_chart_for_short_table():
+    assert "Bảng không quá hai mươi dòng nên kèm chart" in load_prompt("synthesize")
