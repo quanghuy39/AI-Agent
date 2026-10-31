@@ -47,8 +47,8 @@ def led(tmp_path):
     ledger.set_problem({"problem": PROBLEM, "restatement": {"restatement": "Đếm sản phẩm theo nhóm."}})
     work = ledger.root / "work"
     work.mkdir()
-    pd.DataFrame({"group": [f"N{i}" for i in range(20)], "year": [2024] * 20,
-                  "total": [1250.5 + i for i in range(20)]}).to_csv(work / "by_group.csv", index=False)
+    pd.DataFrame({"group": [f"N{i}" for i in range(50)], "year": [2024] * 50,
+                  "total": [1250.5 + i for i in range(50)]}).to_csv(work / "by_group.csv", index=False)
     ledger.add_result("Tổng theo nhóm?", "pandas groupby", {"n": 20}, PASS, question_key="Q1", output_path="work/by_group.csv")
     ledger.confirm_decision(ledger.add_decision("metric_definition", "Doanh thu gồm thuế").id)
     ledger.confirm_decision(ledger.add_decision("anomaly_handling", "Bỏ dòng trùng khóa").id)
@@ -222,13 +222,54 @@ def test_number_columns_right_aligned_vietnamese_year_unchanged(led):
 
 def test_long_table_cut_with_note(led):
     doc = built(led)
-    assert len(doc.tables[0].rows) == 16
-    assert any(p.text == "Hiển thị 15/20 dòng, đầy đủ trong file by_group.csv" for p in doc.paragraphs)
+    assert len(doc.tables[0].rows) == config.REPORT_TABLE_MAX_ROWS + 1 == 41
+    assert any(p.text == "Hiển thị 40/50 dòng, đầy đủ trong file by_group.csv" for p in doc.paragraphs)
 
 
 def test_short_table_no_note(led):
     pd.DataFrame({"group": ["A"], "year": [2024], "total": [1]}).to_csv(led.root / "work" / "by_group.csv", index=False)
     assert not any("Hiển thị" in p.text for p in built(led).paragraphs)
+
+
+# thu tu dong
+def first_column(led, frame, **table):
+    frame.to_csv(led.root / "work" / "by_group.csv", index=False)
+    spec = {"file": "by_group.csv", "columns": list(frame.columns), **table}
+    doc = built(led, {**RECORD, "insights": [insight(1, 1, table=spec), insight(2, 2)]})
+    return [r.cells[0].text for r in doc.tables[0].rows[1:]]
+
+
+SHUFFLED = pd.DataFrame({"group": ["A", "B", "C"], "total": [2, 3, 1], "other": [3, 1, 2]})
+
+
+def test_default_sort_descending_by_only_number(led):
+    assert first_column(led, SHUFFLED[["group", "total"]]) == ["B", "A", "C"]
+
+
+def test_default_keeps_file_order_with_two_numbers(led):
+    assert first_column(led, SHUFFLED) == ["A", "B", "C"]
+
+
+@pytest.mark.parametrize("name", ["year", "order_date", "thang", "month_label", "ngay"])
+def test_default_keeps_file_order_with_time_column(led, name):
+    assert first_column(led, SHUFFLED[["total"]].assign(**{name: ["X", "Y", "Z"]})[[name, "total"]]) == ["X", "Y", "Z"]
+
+
+def test_explicit_sort_wins(led):
+    assert first_column(led, SHUFFLED, sort={"by": "other", "desc": True}) == ["A", "C", "B"]
+    assert first_column(led, SHUFFLED, sort={"by": "other", "desc": False}) == ["B", "C", "A"]
+
+
+def test_sort_by_column_not_shown(led):
+    (SHUFFLED).to_csv(led.root / "work" / "by_group.csv", index=False)
+    spec = {"file": "by_group.csv", "columns": ["group"], "sort": {"by": "total", "desc": True}}
+    doc = built(led, {**RECORD, "insights": [insight(1, 1, table=spec), insight(2, 2)]})
+    assert [r.cells[0].text for r in doc.tables[0].rows[1:]] == ["B", "A", "C"]
+
+
+def test_sort_happens_before_cut(led):
+    frame = pd.DataFrame({"group": [f"N{i}" for i in range(50)], "total": range(50)})
+    assert first_column(led, frame)[:2] == ["N49", "N48"]
 
 
 # anh va kiem cuoi

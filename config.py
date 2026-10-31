@@ -134,7 +134,7 @@ REPORT_LABEL_PT = 9                  # nhan kiem chung, ghi chu duoi bang
 REPORT_MARGIN_CM = 2.5
 REPORT_PICTURE_CM = 16               # chieu rong anh = kho A4 tru hai le
 REPORT_HEADER_FILL = "D9E2F3"        # mau nen dong tieu de bang
-REPORT_TABLE_MAX_ROWS = 15
+REPORT_TABLE_MAX_ROWS = 40            # so dong toi da cua bang trong Word
 REPORT_SUMMARY_MAX_CHARS = 1500      # khoang nua trang
 # Cot so co tu nay trong ten la ma, khong phai so do: giu nguyen, khong ngan nghin (2024 khong thanh 2.024)
 REPORT_PLAIN_NUMBER_HINTS = ("year", "nam", "id", "code", "ma", "key")

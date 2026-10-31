@@ -50,6 +50,10 @@ def _has_digit(text):
     return re.search(r"\d", text) is not None
 
 
+def _is_number(column):
+    return is_numeric_dtype(column) and not is_bool_dtype(column)
+
+
 def _find_table(where, file, available):
     """(bang, loi). Bang dung duoc thi loi la None."""
     table = available.get(file)
@@ -67,6 +71,12 @@ def _table_errors(where, spec, available):
     errors = [f"{where}: không có cột {c} trong {spec.file}." for c in spec.columns if c not in table["columns"]]
     if not 1 <= len(spec.columns) <= config.REPORT_TABLE_SHOW_COLUMNS:
         errors.append(f"{where}: columns cần từ một tới {config.REPORT_TABLE_SHOW_COLUMNS} cột.")
+    if spec.sort:
+        by = spec.sort.by
+        if by not in table["columns"]:
+            errors.append(f"{where}: sort.by {by} không có trong {spec.file}.")
+        elif not _is_number(load_table(table["path"])[by]):
+            errors.append(f"{where}: sort.by {by} không phải cột số.")
     return errors
 
 
@@ -92,7 +102,7 @@ def _chart_data_errors(where, spec, table, mask):
         return [f"{where}: không có cột {', '.join(missing)} trong {spec.file}."]
     df = load_table(table["path"])
     errors = [f"{where}: cột {c} không phải cột số." for c in spec.y
-              if not is_numeric_dtype(df[c]) or is_bool_dtype(df[c])]
+              if not _is_number(df[c])]
     keys = pd.DataFrame({"x": _keys(df[spec.x], mask)})
     if spec.series:
         keys["series"] = _keys(df[spec.series], mask)

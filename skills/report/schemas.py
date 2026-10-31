@@ -16,9 +16,15 @@ class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class TableSort(_Model):
+    by: str
+    desc: bool = True
+
+
 class TableSpec(_Model):
     file: str
     columns: list[str]
+    sort: TableSort | None = None
 
 
 class ChartSpec(_Model):

@@ -27,7 +27,7 @@ from report.charts import (
 )
 from report.synthesize import synthesize
 from skills.report import load_prompt
-from skills.report.schemas import ChartSpec, SynthesisOutput
+from skills.report.schemas import ChartSpec, SynthesisOutput, TableSpec
 
 TASK = "bai0a"
 PASS = [{"name": "c", "status": "pass"}]
@@ -129,6 +129,25 @@ def test_table_columns_exist_and_capped(led):
     assert bad == ["I1.table: không có cột khong_co trong by_group.csv."]
     many = validate_visuals(output(table={"file": "by_group.csv", "columns": ["group"] * 7}), led)
     assert many == ["I1.table: columns cần từ một tới 6 cột."]
+
+
+def test_table_sort_valid(led):
+    spec = {**TABLE, "sort": {"by": "total", "desc": False}}
+    assert validate_visuals(output(table=spec), led) == []
+
+
+def test_table_sort_default_desc():
+    assert TableSpec.model_validate({"file": "a", "columns": ["x"], "sort": {"by": "n"}}).sort.desc is True
+
+
+def test_table_sort_column_must_exist(led):
+    errors = validate_visuals(output(table={**TABLE, "sort": {"by": "khong_co"}}), led)
+    assert errors == ["I1.table: sort.by khong_co không có trong by_group.csv."]
+
+
+def test_table_sort_column_must_be_number(led):
+    errors = validate_visuals(output(table={**TABLE, "sort": {"by": "note"}}), led)
+    assert errors == ["I1.table: sort.by note không phải cột số."]
 
 
 def test_label_with_digit_rejected(led):

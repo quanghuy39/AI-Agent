@@ -23,7 +23,7 @@ from ledger import DecisionStatus, ResultStatus
 from profiling import flags as fl
 from report.charts import _label, tables_of
 from report.placeholders import HYPOTHESIS, VERIFIED, format_value
-from report.tables import is_measure, load_table
+from report.tables import is_measure, is_time_column, load_table
 
 # decision chap nhan ket luan: co dinh, moi lan tu choi roi tong hop lai dung chung; khong phai gia dinh phan tich
 CONCLUSION_KEY = "accept_conclusion|synthesize"
@@ -171,6 +171,18 @@ def _cell_text(value, measure, mask):
     return format_value(int(number) if number.is_integer() else number)
 
 
+def _ordered(df, spec):
+    """Thu tu dong: theo sort cua AI; khong co thi giam dan theo cot so do duy nhat; co cot thoi gian thi giu thu tu file."""
+    sort = spec.get("sort")
+    if sort:
+        return df.sort_values(sort["by"], ascending=not sort.get("desc", True), kind="stable")
+    columns = spec["columns"]
+    measures = [c for c in columns if is_measure(c, df[c])]
+    if len(measures) == 1 and not any(is_time_column(c, df[c]) for c in columns):
+        return df.sort_values(measures[0], ascending=False, kind="stable")
+    return df
+
+
 # ---------- noi dung ----------
 
 class _Report:
@@ -217,7 +229,7 @@ class _Report:
         cited = ", ".join(ins["result_ids"])
         self._caption(f"Bảng {self.n_tables}: {', '.join(headers)} (kết quả {cited})", True)
         measures = [is_measure(c, df[c]) for c in spec["columns"]]
-        top = df.head(config.REPORT_TABLE_MAX_ROWS)
+        top = _ordered(df, spec).head(config.REPORT_TABLE_MAX_ROWS)
         rows = [[_cell_text(top[c].iloc[i], m, self.mask) for c, m in zip(spec["columns"], measures)]
                 for i in range(len(top))]
         _add_table(self.doc, [self.mask(h) for h in headers], rows, {i for i, m in enumerate(measures) if m})
