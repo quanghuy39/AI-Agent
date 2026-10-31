@@ -581,7 +581,6 @@ def test_auto_chart_appears_in_word_and_outline(led):
     assert len(doc.inline_shapes) == 1 and "Hình 1: Tổng tiền theo Nhóm hàng" in styled(doc, "Caption")
     slides = json.loads(outputs["outline"].read_text(encoding="utf-8"))["slides"]
     assert slides[2]["chart"] == "report/charts/I1.png"
-    assert "chart_auto" not in json.dumps(led.get_insights() or {})
 
 
 def test_multi_dimension_table_gets_no_auto_chart(led):

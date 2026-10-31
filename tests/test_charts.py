@@ -28,6 +28,7 @@ from report.charts import (
     with_auto_charts,
 )
 from report.synthesize import synthesize
+from report.tables import ordered
 from skills.report import load_prompt
 from skills.report.schemas import ChartSpec, SynthesisOutput, TableSpec
 
@@ -255,7 +256,13 @@ def test_number_format_is_vietnamese():
 def test_more_than_twenty_groups_keeps_top_fifteen_with_note():
     df = pd.DataFrame({"group": [f"N{i}" for i in range(25)], "total": range(25)})
     frame, note = _limit(_frame(df, spec_of(), {}, str), spec_of(), "Tổng")
-    assert list(frame.index) == [f"N{i}" for i in range(24, 9, -1)] and note == "Hiển thị 15/25 nhóm lớn nhất theo Tổng."
+    assert list(frame.index) == [f"N{i}" for i in range(10, 25)] and note == "Hiển thị 15/25 nhóm lớn nhất theo Tổng."
+
+
+def test_more_than_twenty_stacked_groups_listed_from_largest():
+    df = pd.DataFrame({"group": [f"N{i}" for i in range(25)], "total": range(25)})
+    spec = spec_of(type="stacked_bar")
+    assert list(_limit(_frame(df, spec, {}, str), spec, "Tổng")[0].index) == [f"N{i}" for i in range(24, 9, -1)]
 
 
 def test_twenty_groups_are_all_kept():
@@ -368,7 +375,7 @@ def test_with_auto_charts_logs_and_leaves_record_unchanged(led):
     ins = sales_table(led, "a.csv", ONE_DIM)
     record = {"insights": [ins]}
     done = with_auto_charts(record, led)
-    assert done["insights"][0]["chart_auto"] and record["insights"][0]["chart"] is None
+    assert done["insights"][0]["chart"]["x"] == "category_name" and record["insights"][0]["chart"] is None
     event = [e for e in led.read_log() if e.action == "auto_chart"][-1]
     assert event.extra == {"insight": "I1", "file": "a.csv", "x": "category_name", "y": ["n"]}
 
@@ -378,30 +385,68 @@ def test_no_log_without_auto_chart(led):
     assert not [e for e in led.read_log() if e.action == "auto_chart"]
 
 
-def test_auto_chart_is_drawn_descending(led, monkeypatch):
-    seen = {}
-    ins = sales_table(led, "a.csv", ONE_DIM)
-    done = with_auto_charts({"insights": [ins]}, led)
-
-    def spy(spec, path, out, labels, mask, descending):
-        seen["descending"] = descending
-
-    monkeypatch.setattr(charts, "draw_chart", spy)
-    draw_charts(done, led)
-    assert seen == {"descending": True}
-
-
-def test_descending_sorts_groups_and_time_keeps_order(led, monkeypatch):
+# thu tu nhom cua bar
+@pytest.fixture
+def bar_order(led, monkeypatch):
     orders = []
     monkeypatch.setattr(charts, "_draw_bars", lambda ax, frame, spec: orders.append(list(frame.index)) or False)
-    ONE_DIM.to_csv(led.root / "work" / "a.csv", index=False)
-    pd.DataFrame({"month": ["T1", "T2", "T3"], "n": [1, 3, 2]}).to_csv(led.root / "work" / "t.csv", index=False)
-    out = led.root / "report" / "x.png"
-    draw_chart(ChartSpec.model_validate({**CHART, "file": "a.csv", "x": "category_name", "y": ["n"]}),
-               led.root / "work" / "a.csv", out, descending=True)
-    draw_chart(ChartSpec.model_validate({**CHART, "file": "t.csv", "x": "month", "y": ["n"]}),
-               led.root / "work" / "t.csv", out, descending=True)
-    assert orders == [["B", "C", "A"], ["T1", "T2", "T3"]]
+    return orders
+
+
+def bars_of(led, frame, orders, table=None, **chart):
+    frame.to_csv(led.root / "work" / "a.csv", index=False)
+    ins = {"id": "I1", "result_ids": [f"R{len(led.results())}"], "table": table,
+           "chart": {**CHART, "file": "a.csv", "x": frame.columns[0], "y": [frame.columns[1]], **chart}}
+    led.add_result("B", "m", {}, PASS, output_path="work/a.csv")
+    ins["result_ids"] = [f"R{len(led.results())}"]
+    draw_charts({"insights": [ins]}, led)
+    return orders[-1]
+
+
+def test_ai_bar_sorted_descending(led, bar_order):
+    assert bars_of(led, ONE_DIM, bar_order) == ["B", "C", "A"]
+
+
+def test_auto_chart_sorted_descending(led, bar_order):
+    draw_charts(with_auto_charts({"insights": [sales_table(led, "a.csv", ONE_DIM)]}, led), led)
+    assert bar_order == [["B", "C", "A"]]
+
+
+def test_bar_on_time_column_keeps_file_order(led, bar_order):
+    assert bars_of(led, pd.DataFrame({"month": ["T1", "T2", "T3"], "n": [1, 3, 2]}), bar_order) == ["T1", "T2", "T3"]
+
+
+def test_bar_with_two_numbers_keeps_file_order(led, bar_order):
+    frame = pd.DataFrame({"g": ["A", "B"], "n": [1, 2], "m": [4, 3]})
+    assert bars_of(led, frame, bar_order, y=["n", "m"]) == ["A", "B"]
+
+
+def test_only_bar_is_reordered(led, monkeypatch):
+    orders = []
+    monkeypatch.setattr(charts, "_draw_lines", lambda ax, frame: orders.append(list(frame.index)))
+    assert bars_of(led, ONE_DIM, orders, type="line") == ["A", "B", "C"]
+
+
+def test_bar_follows_table_sort_of_same_insight(led, bar_order):
+    table = {"file": "a.csv", "columns": ["g", "n"], "sort": {"by": "m", "desc": False}}
+    frame = pd.DataFrame({"g": ["A", "B", "C"], "n": [1, 3, 2], "m": [2, 3, 1]})
+    assert bars_of(led, frame[["g", "n", "m"]], bar_order, table=table) == ["C", "A", "B"]
+
+
+def test_bar_and_word_table_same_order(led, bar_order):
+    table = {"file": "a.csv", "columns": ["g", "n"], "sort": {"by": "n", "desc": False}}
+    frame = pd.DataFrame({"g": ["A", "B", "C"], "n": [1, 3, 2]})
+    assert bars_of(led, frame, bar_order, table=table) == list(ordered(frame, table)["g"]) == ["A", "C", "B"]
+
+
+def test_table_of_other_file_does_not_order_bar(led, bar_order):
+    assert bars_of(led, ONE_DIM, bar_order, table={"file": "by_group.csv", "columns": ["group", "note"]}) == ["B", "C", "A"]
+
+
+def test_cut_bar_keeps_order_of_table(led, bar_order):
+    frame = pd.DataFrame({"g": [f"N{i}" for i in range(25)], "n": range(25)})
+    table = {"file": "a.csv", "columns": ["g", "n"], "sort": {"by": "n", "desc": False}}
+    assert bars_of(led, frame, bar_order, table=table) == [f"N{i}" for i in range(10, 25)]
 
 
 def test_prompt_suggests_chart_for_short_table():

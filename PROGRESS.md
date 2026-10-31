@@ -338,6 +338,8 @@ Sau lần chạy thật `bai0a` (số liệu đúng, đã xem Word):
   `insights.json` cũ nhưng không hiển thị, không kiểm, prompt không yêu cầu nữa.
 - Word không lặp bảng, hình: cùng file và cùng tập cột (bảng), cùng type, file, x, y, series (hình) với insight trước thì chỉ ghi
   "Xem Bảng n và Hình m ở trên.", nêu cái đã có. Dàn ý slide vẫn giữ hình cho từng insight.
+- Bar dùng chung `tables.ordered` với bảng Word (dùng đặc tả bảng của cùng insight nếu cùng file), bảng và hình cùng thứ tự; cột
+  thời gian giữ thứ tự file. Cắt top nhóm của bar giữ thứ tự đó.
 
 ## Quyết định đã chốt
 - Prompt analysis trong `skills/analysis/` là nguồn duy nhất cho cả bộ kiểm định lẫn agent: kiểm định đo đúng

@@ -38,6 +38,30 @@ def label_column(columns):
     return names[0] if len(columns) == 2 and len(names) == 1 else None
 
 
+def _grouped(df, group, by, descending):
+    """Cac dong cung nhom lien nhau: nhom xep theo tong cot by, trong nhom xep theo by. Trung tong giu thu tu xuat hien."""
+    groups = [rows for _, rows in df.groupby(group, sort=False, dropna=False)]
+    groups.sort(key=lambda rows: rows[by].sum(), reverse=descending)
+    return pd.concat([rows.sort_values(by, ascending=not descending, kind="stable") for rows in groups]) if groups else df
+
+
+def ordered(df, spec):
+    """Thu tu dong: theo sort cua AI, bang nhieu chieu (nhom x thuong hieu) thi xep theo nhom dau tien de cac dong cung nhom
+    lien nhau. Khong co sort thi giam dan theo cot so do duy nhat; co cot thoi gian hoac bang nhieu chieu thi giu thu tu file."""
+    columns = spec["columns"]
+    measures = [c for c in columns if is_measure(c, df[c])]
+    labels = [c for c in columns if c not in measures]
+    one_dimension = len(labels) < 2 or label_column(labels) is not None
+    sort = spec.get("sort")
+    if sort and not one_dimension:
+        return _grouped(df, labels[0], sort["by"], sort.get("desc", True))
+    if sort:
+        return df.sort_values(sort["by"], ascending=not sort.get("desc", True), kind="stable")
+    if len(measures) == 1 and one_dimension and not any(is_time_column(c, df[c]) for c in columns):
+        return df.sort_values(measures[0], ascending=False, kind="stable")
+    return df
+
+
 def _read_csv(path, **kwargs):
     fmt = r2.detect_csv_format(path)
     return pd.read_csv(path, sep=fmt["delimiter"], encoding=fmt["encoding"], **kwargs)

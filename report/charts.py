@@ -16,7 +16,7 @@ from pandas.api.types import is_bool_dtype, is_numeric_dtype
 import config
 from ledger import ResultStatus
 from report.placeholders import format_value
-from report.tables import is_measure, is_time_column, label_column, load_table, result_tables
+from report.tables import is_measure, label_column, load_table, ordered, result_tables
 from skills.report.schemas import ChartSpec
 
 CHART_TYPES = ("bar", "line", "stacked_bar")
@@ -156,7 +156,7 @@ def _limit(frame, spec, y_label):
         if len(frame) > config.REPORT_CHART_MAX_GROUPS:
             top = frame.sum(axis=1).nlargest(config.REPORT_CHART_TOP_GROUPS).index
             notes.append(f"Hiển thị {len(top)}/{len(frame)} nhóm lớn nhất theo {y_label}.")
-            frame = frame.loc[top]
+            frame = frame[frame.index.isin(top)] if spec.type == "bar" else frame.loc[top]  # bar da xep theo bang
     limit = len(config.REPORT_CHART_PALETTE)
     if frame.shape[1] > limit and spec.type == "stacked_bar":
         order = frame.sum().sort_values(ascending=False).index
@@ -186,15 +186,15 @@ def auto_chart(ins, ledger, mask=str):
 
 
 def with_auto_charts(record, ledger, mask=str):
-    """Ban sao record, them chart du phong cho insight du dieu kien, danh dau chart_auto. insights.json khong doi: day
-    la cach trinh bay do code chon, chay lai cho ket qua nhu nhau."""
+    """Ban sao record, them chart du phong cho insight du dieu kien. insights.json khong doi: day la cach trinh bay do code
+    chon, chay lai cho ket qua nhu nhau."""
     insights = []
     for ins in record["insights"]:
         chart = auto_chart(ins, ledger, mask)
         if chart:
             ledger.log_event("report", "auto_chart", extra={"insight": ins["id"], "file": chart["file"], "x": chart["x"],
                                                             "y": chart["y"]})
-            ins = {**ins, "chart": chart, "chart_auto": True}
+            ins = {**ins, "chart": chart}
         insights.append(ins)
     return {**record, "insights": insights}
 
@@ -270,14 +270,15 @@ def _draw_lines(ax, frame):
     ax.tick_params(axis="x", labelrotation=30)
 
 
-def draw_chart(spec, path, out_path, labels=None, mask=str, descending=False):
-    """Ve mot bieu do ra PNG out_path. descending: xep nhom theo cot so dau tien, giam dan."""
+def draw_chart(spec, path, out_path, labels=None, mask=str, table=None):
+    """Ve mot bieu do ra PNG out_path. Bar xep nhom bang chinh ham xep cua bang Word: table la dac ta bang cung insight (cung
+    file) de bang va hinh cung thu tu; khong co thi theo quy tac mac dinh."""
     labels = labels or {}
     y_label = labels.get(spec.y[0], spec.y[0]) if len(spec.y) == 1 else ""
     df = load_table(path)
+    if spec.type == "bar":
+        df = ordered(df, table or {"columns": [spec.x, *spec.y]})
     frame, note = _limit(_frame(df, spec, labels, mask), spec, y_label or "tổng")
-    if descending and not is_time_column(spec.x, df[spec.x]):
-        frame = frame.sort_values(by=frame.columns[0], ascending=False, kind="stable")
     if frame.empty:
         raise ChartError(f"{spec.file} không có dòng nào để vẽ.")
     with rc_context({"font.family": _font(), "font.size": 11, "axes.unicode_minus": False}):
@@ -313,8 +314,9 @@ def draw_charts(record, ledger, mask=str):
         if table is None:
             raise ChartError(f"{ins['id']}: không tìm thấy bảng {spec.file}.")
         out_path = ledger.root / config.REPORT_SUBDIR / CHARTS_DIR / f"{ins['id']}.png"
+        same_file = ins.get("table") if (ins.get("table") or {}).get("file") == spec.file else None
         try:
-            draw_chart(spec, table["path"], out_path, record.get("column_labels"), mask, bool(ins.get("chart_auto")))
+            draw_chart(spec, table["path"], out_path, record.get("column_labels"), mask, same_file)
         except (KeyError, ValueError) as e:
             raise ChartError(f"{ins['id']}: không vẽ được từ {spec.file} ({type(e).__name__}: {e}).") from None
         drawn[ins["id"]] = out_path
