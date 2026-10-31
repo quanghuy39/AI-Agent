@@ -231,6 +231,37 @@ def test_short_table_no_note(led):
     assert not any("Hiển thị" in p.text for p in built(led).paragraphs)
 
 
+# khong tach khoi bang, hinh
+def paragraph_of(doc, text):
+    return next(p for p in doc.paragraphs if p.text == text)
+
+
+def test_text_label_caption_kept_with_table(led):
+    doc = built(led)
+    assert paragraph_of(doc, "Nhận định 1 là 1.250.").paragraph_format.keep_with_next is True
+    assert paragraph_of(doc, "Đã kiểm chứng").paragraph_format.keep_with_next is True
+    assert styled(doc, "Caption")[0].startswith("Bảng 1")
+    assert paragraph_of(doc, styled(doc, "Caption")[0]).paragraph_format.keep_with_next is True
+
+
+def test_picture_kept_with_its_caption(led):
+    doc = built(led)
+    picture = next(p for p in doc.paragraphs if p._p.xpath(".//w:drawing"))
+    assert picture.paragraph_format.keep_with_next is True
+
+
+def test_insight_without_visual_not_kept(led):
+    doc = built(led)
+    assert not paragraph_of(doc, "Nhận định 2 là 1.250.").paragraph_format.keep_with_next
+    assert not paragraph_of(doc, "Phỏng đoán").paragraph_format.keep_with_next
+
+
+@pytest.mark.parametrize("index", [0, 1])
+def test_every_table_row_cannot_split(led, index):
+    table = built(led).tables[index]
+    assert all(r._tr.trPr.find(qn("w:cantSplit")) is not None for r in table.rows)
+
+
 # thu tu dong
 def first_column(led, frame, **table):
     frame.to_csv(led.root / "work" / "by_group.csv", index=False)

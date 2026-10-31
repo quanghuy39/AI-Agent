@@ -148,6 +148,7 @@ def _write_cell(cell, text, right, bold=False):
 def _add_table(doc, headers, rows, right=()):
     """Bang vien manh, dong tieu de to nen, chu dam, lap lai khi sang trang; right: chi so cot can phai."""
     table = doc.add_table(rows=1, cols=len(headers), style="Table Grid")
+    _row_flag(table.rows[0], "w:cantSplit")
     _row_flag(table.rows[0], "w:tblHeader")
     for i, (cell, text) in enumerate(zip(table.rows[0].cells, headers)):
         _shade(cell)
@@ -208,8 +209,10 @@ class _Report:
         paragraph = self.text(value, "Caption")
         paragraph.paragraph_format.keep_with_next = keep_with_next
 
-    def label(self, label):
-        run = self.doc.add_paragraph().add_run(LABELS[label])
+    def label(self, label, keep_with_next):
+        paragraph = self.doc.add_paragraph()
+        paragraph.paragraph_format.keep_with_next = keep_with_next
+        run = paragraph.add_run(LABELS[label])
         run.font.size = Pt(config.REPORT_LABEL_PT)
         run.font.color.rgb = GRAY
 
@@ -296,8 +299,9 @@ def _results(rep):
     for i, requirement in enumerate(record["requirements"], 1):
         rep.heading(f"3.{i}. {requirement}", 2)
         for ins in (x for x in record["insights"] if x["requirement"] == i):
-            rep.text(ins["text_filled"])
-            rep.label(ins["label"])
+            visual = bool(ins.get("table") or ins.get("chart"))  # doan van va nhan khong bi tach khoi bang, hinh
+            rep.text(ins["text_filled"]).paragraph_format.keep_with_next = visual
+            rep.label(ins["label"], visual)
             if ins.get("table"):
                 rep.data_table(ins)
             if ins.get("chart"):
