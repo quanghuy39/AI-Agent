@@ -623,6 +623,29 @@ def build_feedback(run, grade=None):
     return "\n\n".join(parts)
 
 
+def failure_info(run, grade=None):
+    """(loai loi, ly do mot dong) cua mot lan thu chua dat; chua che (goi ctx.mask truoc khi ghi hoac in)."""
+    if run.blocked_reason:
+        return "blocked", f"code bị chặn: {run.blocked_reason}"
+    if run.timed_out:
+        return "timeout", "code chạy quá thời gian cho phép"
+    if not run.ok:
+        lines = [line.strip() for line in run.stderr.splitlines() if line.strip()]
+        return "code_error", lines[-1] if lines else f"mã thoát {run.returncode}"
+    if run.meta is None:
+        return "no_meta", run.meta_error or "không có file meta tại AGENT_META_PATH"
+    errors = grade.structural_errors
+    return "structural", errors[0] + (f" (và {len(errors) - 1} lỗi khác)" if len(errors) > 1 else "")
+
+
+def _failure_record(ctx, run, grade):
+    """Lan thu chua dat cho run_log: che truoc khi cat, de khong de lai mot phan gia tri che o cho cat."""
+    kind, reason = failure_info(run, grade)
+    return {"kind": kind, "reason": " ".join(ctx.mask(reason).split()),
+            "stderr": ctx.mask(run.stderr)[-config.ANALYSIS_LOG_STDERR_CHARS:],
+            "structural_errors": [ctx.mask(e) for e in (grade.structural_errors if grade else [])]}
+
+
 def _work_files(ctx, max_files=None):
     """Dong liet ke file trong work/ cho AI; bo _superseded/ (runner cung khong chep thu muc nay).
     max_files: chi giu file moi nhat."""
@@ -785,14 +808,17 @@ def _solve_attempts(ctx, q, results_by_key, max_retries, yes, ask_user):
         run = runner.run_code(step.code, ctx.task, step_name)
         grade = grade_meta(run.meta, step, ctx.input_dir, ctx.work_dir) if run.ok and run.meta is not None else None
         ok = grade is not None and grade.ok
+        failure = None if ok else _failure_record(ctx, run, grade)
         ctx.ledger.log_event("analysis", "step_attempt", inputs={"question": q.key, "attempt": attempt},
                              code_file=_rel(ctx, run.code_path), status="ok" if ok else "retry",
                              extra={"run_ok": run.ok, "has_meta": run.meta is not None,
-                                    "n_structural_errors": len(grade.structural_errors) if grade else None})
+                                    "n_structural_errors": len(grade.structural_errors) if grade else None,
+                                    **({"failure": failure} if failure else {})})
         if ok:
             return _record(ctx, q, step, run, grade, results_by_key, yes, ask_user)
         feedback = ctx.mask(build_feedback(run, grade))
-        print(f"{q.key}: lần {attempt} chưa đạt, gửi lại lỗi cho AI.")
+        reason = failure["reason"][:config.ANALYSIS_FAILURE_LINE_CHARS]
+        print(f"{q.key}: lần {attempt} chưa đạt ({failure['kind']}): {reason}. Gửi lại lỗi cho AI.")
     ctx.ledger.add_open_item(f"{q.key}: không giải được sau {max_retries + 1} lần thử. Lỗi cuối: "
                              f"{feedback[:300]}")
     raise StopLoop(f"{q.key}: hết {max_retries} lần thử lại.")

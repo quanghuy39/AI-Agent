@@ -13,7 +13,7 @@ Cập nhật: 31/10/2026. Nguồn: git log, code trong repo, tóm tắt cuối n
 | 5 | Xong | Runner, skill phân tích, meta_grader, `analysis.loop`, fit_prompt, bộ kiểm định theo skill thật; chốt chuỗi analysis. Bài 0a ĐẠT toàn bộ; bài 1 chạy trọn 4 câu, số liệu đúng, phán đoán BI chưa đạt. 645 test pass. |
 | 6 | Xong | Điều phối theo pha, chạy tiếp được, `--fake` tách hồ sơ, điểm dừng xác nhận, decision pending và superseded, cờ chất lượng thành decision, `context_builder`, đồng bộ hồ sơ lên R2, 5 quy tắc chung trong prompt, `tests.grade <bài>`. Bài 2 chạy thật: số tổng hợp khớp, phán đoán BI chưa đạt. 858 test pass. |
 | 7 | Xong | Kiểm định report; pha synthesize; `output_path` đủ file bảng; biểu đồ, Word, hồ sơ bài toán, dàn ý slide, `--resynthesize`, `--build-report`. Bài 0a chạy thật: `grade_bai0a` ĐẠT 3/3, Word đủ 7 mục, không còn placeholder trong Word và `slides_outline.json`, mọi insight dẫn về id kết quả. 1239 test pass, commit cuối 2fb62a9. |
-| 8 | Xong | Cột nhạy cảm khai báo trong dictionary, profile lưu etag dictionary. Bài 2 chạy thật: số liệu đúng, phán đoán BI chưa đạt. Nghiệm thu 5 Đạt, 3 Một phần (số liệu còn hai lỗi ở bài 2, phán đoán BI bài 2 Không). `--redo`, lựa chọn `s` ở điểm dừng có cờ. README, BACKLOG. 1282 test pass. |
+| 8 | Xong | Cột nhạy cảm khai báo trong dictionary, profile lưu etag dictionary. Bài 2 chạy thật: số liệu đúng, phán đoán BI chưa đạt. Nghiệm thu 5 Đạt, 3 Một phần (số liệu còn hai lỗi ở bài 2, phán đoán BI bài 2 Không). `--redo`, lựa chọn `s` ở điểm dừng có cờ. README, BACKLOG. Lần `--redo R13` thật dừng mã 3 do phép kiểm join chặn nhầm, chưa sửa. 1293 test pass. |
 
 ## Ngày 5
 
@@ -403,6 +403,14 @@ Vòng 4, chạy lại một bước (thiết kế 8.5):
 - `task_id` vẫn theo bài như câu thường, không theo câu: phát hiện đổi model (`set_task_model`) dựa vào đó.
 - `step.md` đổi nên prompt của bộ kiểm định analysis cũng đổi (thêm mục rỗng).
 - Thử `python main.py bai0b --fake --redo R3 --yes`: mã 0, R3 superseded, R4 valid, dựng lại đủ báo cáo.
+
+Vòng 5, chẩn đoán `python main.py bai2 --redo R13 --note ...` (mã 3, dừng ở Q4 sau 4 lần, chưa sửa nguyên nhân):
+- Lần 1 `SyntaxError` (thiếu ngoặc). Lần 2, 3 chạy đúng, 47.770 đơn duy nhất khớp phép tính độc lập, nhưng `_join_declaration_mismatch` chặn nhầm
+  vì có `row_count` trước sau bằng nhau trên ORDER. Lần 4 ghi meta vào `work/meta_q4.json` thay vì `AGENT_META_PATH`; meta đó cũng sẽ bị chặn y hệt.
+- Note có trong prompt cả 4 lần: dựng lại prompt trùng `prompt_hash` ở lần 1, 3, 4; lần 2 khác hash chỉ vì stderr chứa đường dẫn thư mục tạm.
+- Hồ sơ: phase loop, `redo_notes` còn Q4, Q5; R13 superseded, R15 stale; local không có `report/`, R2 còn báo cáo cũ. Mã 3 đúng bảng mã.
+- Đã thêm: `step_attempt` có `failure` (kind, reason, stderr đã che, structural_errors), màn hình in lý do một dòng ở mỗi lần chưa đạt.
+- Việc tiếp theo: sửa `_join_declaration_mismatch` (mục đầu của [BACKLOG.md](BACKLOG.md)) rồi mới chạy `python main.py bai2`.
 
 ## Quyết định đã chốt
 - Cờ info (31/10/2026): không sửa. Thiết kế 7.2 quy định cờ info không tạo điểm dừng riêng, chỉ liệt kê ở điểm dừng xử lý bất

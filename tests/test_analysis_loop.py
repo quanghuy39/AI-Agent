@@ -226,6 +226,86 @@ def test_masked_values_never_reach_ai(env):
     assert not any(c in str(e.model_dump()) for e in ledger(env).read_log() for c in IDS)
 
 
+# ly do that bai moi lan thu: run_log va man hinh
+def attempts(env):
+    return [e.extra for e in ledger(env).read_log() if e.action == "step_attempt"]
+
+
+def test_code_error_reason_goes_to_log_and_screen(env, capsys):
+    bad = step("raise ValueError('hỏng giữa chừng')\n", ["q1.csv"])
+    assert run([PLAN, bad, STEP1, STEP2])[0] == loop.DONE
+    first, second = attempts(env)[:2]
+    assert first["failure"]["kind"] == "code_error" and first["failure"]["reason"] == "ValueError: hỏng giữa chừng"
+    assert "Traceback" in first["failure"]["stderr"] and first["failure"]["structural_errors"] == []
+    assert "failure" not in second
+    assert "Q1: lần 1 chưa đạt (code_error): ValueError: hỏng giữa chừng. Gửi lại lỗi cho AI." in capsys.readouterr().out
+
+
+def test_syntax_error_reason_is_error_line(env):
+    bad = step("x = int(len('a')\ny = 1\n", ["q1.csv"])
+    run([PLAN, bad, STEP1, STEP2])
+    assert attempts(env)[0]["failure"]["reason"].startswith("SyntaxError:")
+
+
+def test_structural_reason_lists_all_errors(env, capsys):
+    thin = step(Q1_CODE, ["q1.csv", "khong_co.csv"], risks=("rủi ro 1", "rủi ro 2"))
+    run([PLAN, thin, STEP1, STEP2])
+    failure = attempts(env)[0]["failure"]
+    assert failure["kind"] == "structural" and len(failure["structural_errors"]) == 2
+    assert failure["reason"].startswith("file khai báo trong output_files") and failure["reason"].endswith("(và 1 lỗi khác)")
+    assert "lần 1 chưa đạt (structural)" in capsys.readouterr().out
+
+
+def test_no_meta_reason(env):
+    run([PLAN, step("print('xong')\n", ["q1.csv"]), STEP1, STEP2])
+    failure = attempts(env)[0]["failure"]
+    assert failure["kind"] == "no_meta" and "AGENT_META_PATH" in failure["reason"]
+
+
+def test_blocked_reason(env):
+    run([PLAN, step("import socket\n", ["q1.csv"]), STEP1, STEP2])
+    failure = attempts(env)[0]["failure"]
+    assert failure["kind"] == "blocked" and "socket" in failure["reason"]
+
+
+@pytest.mark.parametrize("fields, kind, reason", [
+    ({"timed_out": True}, "timeout", "quá thời gian"),
+    ({"returncode": 7}, "code_error", "mã thoát 7"),
+    ({"ok": True, "meta_error": "meta không phải JSON hợp lệ"}, "no_meta", "meta không phải JSON hợp lệ"),
+])
+def test_failure_info_kinds(fields, kind, reason):
+    got_kind, got_reason = loop.failure_info(runner.RunResult(**{"ok": False, **fields}))
+    assert got_kind == kind and reason in got_reason
+
+
+def test_failure_masks_value_on_log_and_screen(env, capsys):
+    leaky = step("import os\nimport pandas as pd\n"
+                 "c = pd.read_csv(os.path.join(os.environ['AGENT_INPUT_DIR'], 'CUSTOMER.csv'), dtype=str)\n"
+                 "raise ValueError('khách lỗi: ' + c['customer_id'][0])\n", ["q1.csv"])
+    run([PLAN, leaky, STEP1, STEP2])
+    failure = attempts(env)[0]["failure"]
+    assert failure["reason"] == "ValueError: khách lỗi: [đã che]" and "[đã che]" in failure["stderr"]
+    out = capsys.readouterr().out
+    assert "khách lỗi: [đã che]" in out and not any(c in out or c in str(failure) for c in IDS)
+
+
+def test_stderr_masked_before_cut_and_limited(env, monkeypatch):
+    # cat truoc khi che se de lai duoi "0001" cua gia tri che
+    monkeypatch.setattr(loop.config, "ANALYSIS_LOG_STDERR_CHARS", 50)
+    code = f"import sys\nsys.stderr.write('{IDS[0]}' + 'x' * 46)\nraise SystemExit(1)\n"
+    run([PLAN, step(code, ["q1.csv"]), STEP1, STEP2])
+    stderr = attempts(env)[0]["failure"]["stderr"]
+    assert len(stderr) == 50 and "0001" not in stderr
+
+
+def test_screen_reason_is_one_short_line(env, monkeypatch, capsys):
+    monkeypatch.setattr(loop.config, "ANALYSIS_FAILURE_LINE_CHARS", 20)
+    code = "raise ValueError('a' * 500)\n"
+    run([PLAN, step(code, ["q1.csv"]), STEP1, STEP2])
+    line = next(x for x in capsys.readouterr().out.splitlines() if "chưa đạt" in x)
+    assert "a" * 21 not in line and len(attempts(env)[0]["failure"]["reason"]) > 400
+
+
 # (h) sap xep phu thuoc
 def test_topo_order_and_cycle():
     qs = [SubQuestion(key="Q1", question="a", depends_on=["Q3"]), SubQuestion(key="Q2", question="b"),

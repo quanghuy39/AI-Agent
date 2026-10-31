@@ -105,6 +105,8 @@ ANALYSIS_MAX_RETRIES = 3             # so lan goi lai AI cho moi cau hoi sau lan
 ANALYSIS_UNDERSTAND_MAX_RETRIES = 3  # so lan goi lai AI dien giai de sau lan dau, khi nguoi dung gop y
 ANALYSIS_PLAN_MAX_RETRIES = 3        # so lan lap lai ke hoach sau lan dau, khi nguoi dung gop y
 ANALYSIS_FEEDBACK_STDERR_CHARS = 1500  # error_feedback chi giu chung nay ky tu cuoi cua stderr
+ANALYSIS_LOG_STDERR_CHARS = 3000     # run_log giu chung nay ky tu cuoi cua stderr moi lan thu, sau khi che
+ANALYSIS_FAILURE_LINE_CHARS = 200    # ly do that bai in ra man hinh cat con chung nay ky tu
 ANALYSIS_MASK_MIN_CHARS = 4          # gia tri cot che ngan hon thi khong thay (tranh thay nham)
 # Bao ve do dai prompt buoc giai: token ~ ky tu / PROMPT_CHARS_PER_TOKEN + PROMPT_SCHEMA_TOKENS (chi dan schema
 # ask_model gan them), so voi max_input_tokens nho nhat cua chuoi analysis, chua bien PROMPT_MARGIN.
