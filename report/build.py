@@ -11,5 +11,7 @@ def build_report(ledger, task, record, profile, mask=str):
     charts = draw_charts(record, ledger, mask)
     docx_path = folder / f"bao_cao_{task}.docx"
     save_document(build_document(record, ledger, charts, task, profile, mask), docx_path)
+    case_path = folder / f"ho_so_{task}.md"
+    case_path.write_text(mask(ledger.render_markdown()), encoding="utf-8")  # file rieng, khong chen vao Word
     ledger.log_event("report", "build", extra={"n_charts": len(charts), "docx": docx_path.name})
-    return {"docx": docx_path}
+    return {"docx": docx_path, "case": case_path}

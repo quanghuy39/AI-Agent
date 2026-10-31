@@ -114,6 +114,7 @@ def _build_outputs(ctx):
         raise loop.StopLoop(f"Không dựng được báo cáo: {ctx.mask(str(e))} Không ghi file Word.") from None
     led.close_open_items_with_text(REPORT_OPEN_ITEM)
     print(f"Báo cáo: {outputs['docx']}")
+    print(f"Hồ sơ bài toán: {outputs['case']}")
 
 
 # ---------- ma thoat ----------

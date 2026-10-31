@@ -283,6 +283,27 @@ def test_old_record_without_new_keys(led):
     assert styled(built(led, old), "Heading 1") == list(HEADINGS)
 
 
+# ho so bai toan
+def test_case_file_is_ledger_markdown(led):
+    outputs = build_report(led, TASK, RECORD, PROFILE)
+    assert outputs["case"] == led.root / "report" / f"ho_so_{TASK}.md"
+    assert outputs["case"].read_text(encoding="utf-8") == led.render_markdown()
+
+
+def test_case_file_masks_values_and_stays_out_of_word(led):
+    led.add_result("Khách nào?", "m", {"top": "BIMAT"}, PASS)
+    outputs = build_report(led, TASK, RECORD, PROFILE, lambda s: s.replace("BIMAT", "[đã che]"))
+    text = outputs["case"].read_text(encoding="utf-8")
+    assert "BIMAT" not in text and "[đã che]" in text
+    assert "Hồ sơ phân tích" not in "\n".join(p.text for p in docx.Document(outputs["docx"]).paragraphs)
+
+
+def test_case_file_not_written_when_word_fails(led):
+    with pytest.raises(ReportError):
+        build_report(led, TASK, {**RECORD, "summary_filled": "{{R1.n}}"}, PROFILE)
+    assert not (led.root / "report" / f"ho_so_{TASK}.md").exists()
+
+
 # phu tro
 @pytest.mark.parametrize("problem, title", [("# Bài 2: Đánh giá hiệu quả\n\nx", "Đánh giá hiệu quả"), ("\n# Đề khác\n", "Đề khác"),
                                             ("", "bai0a")])
