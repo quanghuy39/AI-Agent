@@ -13,7 +13,7 @@ Cập nhật: 31/10/2026. Nguồn: git log, code trong repo, tóm tắt cuối n
 | 5 | Xong | Runner, skill phân tích, meta_grader, `analysis.loop`, fit_prompt, bộ kiểm định theo skill thật; chốt chuỗi analysis. Bài 0a ĐẠT toàn bộ; bài 1 chạy trọn 4 câu, số liệu đúng, phán đoán BI chưa đạt. 645 test pass. |
 | 6 | Xong | Điều phối theo pha, chạy tiếp được, `--fake` tách hồ sơ, điểm dừng xác nhận, decision pending và superseded, cờ chất lượng thành decision, `context_builder`, đồng bộ hồ sơ lên R2, 5 quy tắc chung trong prompt, `tests.grade <bài>`. Bài 2 chạy thật: số tổng hợp khớp, phán đoán BI chưa đạt. 858 test pass. |
 | 7 | Xong | Kiểm định report; pha synthesize; `output_path` đủ file bảng; biểu đồ, Word, hồ sơ bài toán, dàn ý slide, `--resynthesize`, `--build-report`. Bài 0a chạy thật: `grade_bai0a` ĐẠT 3/3, Word đủ 7 mục, không còn placeholder trong Word và `slides_outline.json`, mọi insight dẫn về id kết quả. 1239 test pass, commit cuối 2fb62a9. |
-| 8 | Đang làm | Đã xong: cột nhạy cảm khai báo trong dictionary, bỏ hằng số cột che mặc định trong `config.py`, profile lưu etag dictionary và dừng mã 3 khi lệch, chưa commit. 1251 test pass. Còn lại xem "Kế hoạch Ngày 8". |
+| 8 | Xong | Cột nhạy cảm khai báo trong dictionary, profile lưu etag dictionary. Bài 2 chạy thật: số liệu đúng, phán đoán BI chưa đạt. Nghiệm thu 4 Đạt, 4 Một phần (số liệu đúng ở cả hai bài test, phán đoán BI bài 2 Không). README, BACKLOG. 1251 test pass. |
 
 ## Ngày 5
 
@@ -357,7 +357,48 @@ Sau lần chạy thật `bai0a` (số liệu đúng, đã xem Word):
   Tên riêng thường (Việt Nam) không nhận ra được nên vẫn bị viết thường.
 - Stacked_bar: nhóm xếp theo tổng các dải giảm dần (`tables.grouped`, hàm bảng có `sort` dùng), trục thời gian giữ thứ tự file.
 
+## Ngày 8
+
+Tài liệu: hướng dẫn dùng ở [README.md](README.md), việc còn lại theo ưu tiên ở [BACKLOG.md](BACKLOG.md).
+
+Đã xong trước khi chạy bài 2:
+- `(PK, SENSITIVE)` cho `CUSTOMER.customer_id` trong dictionary `bai1`, `bai2`; bỏ hằng số cột che mặc định.
+- `report["dictionary"]["etag"]`; dùng lại profile mà etag lệch thì dừng mã 3; `profiling.data_summary --refresh` nhận `--set`, `--range`.
+- Docker build được, đọc R2 trong container được; chưa chạy trọn một bài trong container.
+
+Bài 2 chạy thật (`python main.py bai2 --restart`, 31/10/2026, kết quả R11 đến R15, D19 đến D29):
+- Hồ sơ đồng bộ đủ sau khi chạy tay `python -m storage.sync bai2` (1 file từng lỗi `EndpointConnectionError`).
+- `tests.grade bai2`: kênh 18/18, chiến dịch 24/24, `cost_tier` 6/6 khớp; tính lại từ dữ liệu gốc 0 ô sai. Bẫy ĐÃ NÊU 2/12 như Ngày 6;
+  đọc tay chỉ #9 (định nghĩa hiệu quả, cửa sổ thời gian) là nêu thật, #6 chỉ trùng từ.
+- 10 lượt gọi đều qua `gemini_3_5_flash_lite`, 2 lượt trúng cache, 57.918 token, không chuyển model.
+- Q3, Q5 lần 1 lỗi `KeyError` do đoán sai tên cột file bước trước; lần 2 đạt.
+- R13: join theo `customer_id` 280.103 → 9.900.061 dòng vì mỗi lượt ghép với mọi đơn của khách (trung bình 37,95 đơn). Tính lại độc lập 8/8
+  chiến dịch khớp, 7.321 của Seasonal Sale không đếm trùng; nhưng 7.236 đơn tính cho từ 2 chiến dịch (tổng 57.073 so với 47.770 đơn duy nhất).
+- 35,86% lượt tiếp cận trước ngày đăng ký, báo cáo không nêu.
+- I6 rỗng vì `result_summary` của R15 chỉ có 2 số đếm và 1 cờ true; `validate_synthesis` không kiểm nội dung. R15 khai dùng `cost_tier`
+  nhưng không dùng, ghi "Tăng", chắc chắn "Cao" dù chênh lệch không có ý nghĩa (p = 0,196 và 0,508).
+- Word đủ 7 mục, 7 bảng, 6 hình, không còn `{{`; I1 đến I4 Đã kiểm chứng, I5, I6 Phỏng đoán. Bảng 5 ghi sai nghĩa cột (7.531 so với 35.180).
+
+Kiểm tra cuối: `pytest` 1251 pass, `tests.grade_bai0b` ĐẠT 5/5, `tests.grade_bai0a` ĐẠT 3/3.
+
+Nghiệm thu 8 tiêu chí:
+
+| # | Tiêu chí | Kết quả |
+|---|---|---|
+| 1 | Đáp án đúng, số truy vết được | Một phần: số liệu Đạt, phán đoán BI bài 2 Không |
+| 2 | Bắt dữ liệu lỗi | Một phần: 0b 5/5, nhưng lỗi thời gian bài 2 không bắt |
+| 3 | Sửa một bước chỉ stale phần phụ thuộc | Một phần: `mark_stale` đúng, luồng chạy chưa gọi |
+| 4 | Dừng rồi chạy tiếp | Đạt |
+| 5 | Đổi model chỉ qua `llm.yaml`, `.env` | Đạt |
+| 6 | 429, 5xx chuyển model; 401, 403, 400 không | Đạt |
+| 7 | Chỉ model đã kiểm định; log đủ | Một phần: log Đạt, 3/4 model analysis chưa validated |
+| 8 | Hết chuỗi dừng an toàn | Đạt |
+
 ## Quyết định đã chốt
+- Cờ info (31/10/2026): không sửa. Thiết kế 7.2 quy định cờ info không tạo điểm dừng riêng, chỉ liệt kê ở điểm dừng xử lý bất
+  thường, nên bài có decision `anomaly_handling` (như `bai0b`) liệt kê cờ info mà không có câu xác nhận riêng là đúng.
+- File cũ trên R2 (31/10/2026): giữ nguyên, không xóa tay. Lý do: xóa tay làm lệch manifest đồng bộ (manifest tưởng file đã có nên
+  không tải lại). README ghi rõ đọc `results.json` để biết file nào còn hiệu lực.
 - Chuỗi report (31/10/2026): `gemini_3_5_flash_lite` → `mistral_ministral_14b`, cả hai 9/10 và validated. Bỏ
   `groq_gpt_oss_120b` (10/10) vì `max_input_tokens` 5000 kéo trần ngữ cảnh cả chuỗi xuống 4.500; bỏ
   `openrouter_cohere_north_mini_code` vì rớt `no_typed_numbers` (tự gõ số); bỏ `gemma_4_31b` vì lỗi 500 phía Google, chưa kiểm
@@ -404,75 +445,7 @@ Bỏ: chạy trong container (giữ Dockerfile), chạy lại bài 1. Cập nh�
 
 ## Backlog
 
-### Báo cáo
-- Bảng nhiều chiều không có `sort` lệch thứ tự với hình: bảng giữ thứ tự file, stacked_bar xếp theo tổng (Bảng 2, Hình 2 `bai0a`).
-- Tên riêng bị viết thường trong tiêu đề biểu đồ ("Việt Nam" thành "việt Nam"): code chỉ nhận ra mã, viết tắt.
-- AI né luật chữ số bằng số viết chữ ("mục sáu"): `validate_synthesis` không chặn được. Word mới chỉ đưa câu "Không có hạn chế
-  đáng kể..." về nguyên văn.
-- Diễn đạt vụng ở I3 `bai0a`.
-- Quy tắc tránh từ đánh giá mức độ chỉ nằm trong prompt, không có phép kiểm bằng code.
-- Insight chỉ sâu bằng số có trong `result_summary`: AI thấy tên file, tên cột của bảng, không thấy giá trị dòng.
-- `Q<số>` nghĩa quý trong bảng hoặc tên cột: văn bản đã bị chặn (coi là mã nội bộ, kể cả khi nghĩa là quý), AI phải viết bằng lời
-  hoặc dùng placeholder.
-- Kiểm định report mới là sàng lọc trên prompt Ngày 2, chưa chạy trên prompt synthesize thật.
-- Prompt synthesize 2.756/3.000 ký tự (`test_prompt_length`), thêm quy tắc phải rút chỗ khác.
-
-### Phân tích
-- Kế hoạch dồn nhiều yêu cầu vào 1 câu hỏi.
-- Decision trùng ý (D6, D7 `bai0a`) ở pha giải.
-- Model không ổn định giữa các lần chạy: hai lần chạy cùng câu cho cách tính khác nhau.
-- Bài học Ngày 6, chuyển thành code thay vì lời nhắc trong prompt:
-  - (a) So sánh nhóm phải kèm kiểm định, có xử lý nhiều phép so sánh, trước khi cho ghi mức chắc chắn.
-  - (b) Profiling kiểm thứ tự thời gian giữa các bảng và kỳ dữ liệu trọn vẹn.
-  - (c) Mọi decision required hỏi riêng từng cái, không duyệt gộp theo kind.
-  - (d) `tests.grade` bỏ qua file dữ liệu dòng chi tiết khi dò "số gần nhất".
-- `plan.md` sát trần: prompt plan 5.993/6.000 ký tự (`test_prompt_lengths`).
-- Chạy lại kiểm định analysis vì prompt đã đổi.
-- Thử lại kiểm định gemini_3_8_flash và gemma_4_31b khi Google ổn định; kiểm định đủ 12 case cho groq_gpt_oss_120b.
-- `findings.json` không superseded khi `--restart`: phát hiện của kết quả cũ còn nguyên, `tests/grade.py` vẫn đối chiếu với chúng.
-- `--restart` có thể ra lại đúng kế hoạch cũ: prompt plan không đổi thì trúng cache của `ask_model`.
-- Cờ mới xuất hiện sau khi kế hoạch đã được chấp nhận (profiling lại khi đang ở pha loop) chưa được đăng ký thành decision;
-  chỉ đăng ký ở pha plan.
-- `tests/grade.py` đối chiếu theo từ khóa: LỆCH, CẦN NGƯỜI XEM và đánh giá bẫy cần người xem lại (hai mục bẫy script chấm ĐÃ NÊU
-  thực ra là trùng từ).
-- Dictionary bài 1, 2 nhắc bảng EXTERNAL_FACTOR, PRICE_CHANGE không có trong dữ liệu.
-- `state.sensitive` chỉ lưu `--sensitive`, không lưu cột che từ dictionary: mã 3 chỉ xảy ra khi `--sensitive` khác state, thẻ dictionary đổi
-  giữa chừng thì không dừng.
-- Che giá trị chỉ thay chuỗi khớp nguyên văn (giá trị >= 4 ký tự); reason của check custom lấy nguyên từ meta.
-- Báo cáo cũ gắn `source_key` theo ngưỡng mặc định vì báo cáo không lưu ngưỡng đã dùng (`--set` lúc profiling).
-
-### Hạ tầng
-- `--fake` trên hồ sơ `output/_fake/<bài>/` cũ dừng mã 3 (profile chưa có etag), lệnh `--refresh` trong thông báo không đụng tới `_fake`:
-  phải xóa tay `output/_fake/<bài>/data_profile.json`, lần `--fake` sau tự profile lại.
-- `test_interrupted_at_conclusion_reasks_without_calling_ai` rớt 1 lần khi chạy pytest song song với profiling file lớn (Q2 thử lại, hết kịch
-  bản FakeLLM); chạy riêng 3 lần và chạy toàn bộ lúc máy rảnh đều pass. Tránh chạy pytest cùng lúc với việc nặng.
-- Đồng bộ tải cả file tạm `~$*` của Word lên R2: cần bỏ qua.
-- Bản sao thừa `_superseded/report_20261031_131229_032292` còn trên R2 (và ở `output/bai0a/`): đồng bộ không xóa, phải xóa tay.
-- `test_build_report_does_not_call_ai_and_rebuilds` từng rớt một lần khi có Word ẩn (lần chạy đó chậm gấp 5), chưa rõ nguyên nhân,
-  không có log lỗi; chạy riêng và các lần chạy toàn bộ sau đều pass.
-- R2 `output/<bài>/work/` còn file cũ của lần chạy trước `--restart`, `insights.json` cũ còn tới khi có bản mới ghi đè (đồng bộ không
-  xóa): cần xử lý nếu tải hồ sơ từ R2 về.
-- Manifest đồng bộ chỉ ở máy này: máy khác hoặc container mới sẽ tải lại toàn bộ; object bị xóa tay trên R2 không được tải lại cho
-  tới khi file đổi.
-- Sự kiện `sync` tự làm đổi `run_log.jsonl`, nên mỗi lượt sau luôn tải lại file này, dòng log của lượt cuối chỉ lên R2 ở lần chạy
-  sau. Với `--yes` không có câu hỏi nên chỉ đồng bộ khi kết thúc.
-- `data_profile.json` chứa dòng mẫu thô, kể cả cột che, và được đồng bộ lên `output/` của bucket: cần bỏ trước khi dùng dữ liệu
-  công ty hoặc chia sẻ output.
-- Hồ sơ thật `bai0a`, `bai2` tạo trước phần A: `output_path` còn thiếu file (đã bù bằng `run_log` trong `result_tables`).
-- Hồ sơ `bai1` tạo trước Ngày 6 không có `state.json` và `question_key`: lần chạy đầu giải lại mọi câu, kết quả cũ vẫn valid (có in
-  cảnh báo); nên dùng `--restart`.
-- Bài đã `done` thì chạy lại chỉ báo xong, không đối chiếu `--sensitive`.
-- `runner.OUTPUT_DIR` và `quality.OUTPUT_DIR` đang đổi tạm biến toàn cục cho `--fake`; nên truyền tham số.
-- Runner và grader của bộ kiểm định không phải sandbox thật (quét tĩnh lách được bằng ghép chuỗi lúc chạy).
-- Open_item không tự đóng hết.
-- Mức thận trọng chỉ có `chuan`.
-- `enforce_validation` còn false. Bật theo vai trò cần sửa `llm/client.py`: hiện cờ này áp cho mọi vai trò cùng lúc.
-- Chuỗi `slide` trong `config/llm.yaml` còn đó, chưa kiểm định; slide hiện không gọi AI.
-- Ước lượng token đang dùng số ký tự / 3,4 (`PROMPT_CHARS_PER_TOKEN`) + 700 cho chỉ dẫn schema.
-- Cache input có thể cũ nếu R2 lỗi kết nối (có cảnh báo `R2_UNREACHABLE`).
-- Hạn mức: Gemini 3.8 Flash 20 lượt/ngày, OpenRouter 50 lượt/ngày (`config/llm.yaml`).
-- `requirements.txt` không có scipy (tóm tắt Ngày 1 có nhắc scipy): chưa xác nhận có cần không.
-- `run_eval` chỉ lưu `finish_reason` của lần gọi cuối (llm/ không trả theo từng lần thử lại JSON).
+Xem [BACKLOG.md](BACKLOG.md).
 
 ## Cách bắt đầu phiên mới
 1. Đọc `CLAUDE.md` (quy tắc bất biến, lệnh, cấu trúc).
