@@ -21,6 +21,7 @@ COPY runner/ runner/
 COPY skills/ skills/
 COPY report/ report/
 COPY slides/ slides/
+COPY templates/ templates/
 
 ENTRYPOINT ["python"]
 CMD ["main.py"]
