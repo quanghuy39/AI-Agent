@@ -26,6 +26,10 @@ OUT = ROOT / "output" / PROBLEM
 KEYS = ["category_id", "brand"]
 COUNT_HINTS = ("so_san_pham", "count", "n_products", "num", "total", "so_luong", "products", "n")
 NEED_HUMAN = "cần người xem"
+# (ten khoa khop chinh xac, mau chuoi con dung khi khong co khoa do)
+TOTAL_PRODUCTS = ("total_products", r"total.*product|product.*total|tong.*san_pham")
+TOTAL_CATEGORIES = ("total_categories", r"total.*categor|n_categor|so.*nhom")
+MAX_COUNT = ("max_count", r"max.*(count|n_|so|product)|(count|so).*max|top.*count")
 
 
 def _answers_in_cache():
@@ -122,6 +126,13 @@ def grade_table(answer):
 
 # ---------- muc 2 ----------
 
+def numeric_keys(summary, exact, pattern):
+    """Khoa so cua result_summary: co khoa dung ten thi chi lay khoa do, khong co moi do theo chuoi con
+    (de max_total_products khong bi lay nham cho total_products)."""
+    numeric = [k for k, v in summary.items() if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    return [exact] if exact in numeric else [k for k in numeric if re.search(pattern, k, re.I)]
+
+
 def _summary_ids(summary, pattern):
     """Ma nhom hang (dang CAT...) trong cac khoa result_summary khop pattern; gia tri co the ghep bang , ; |."""
     ids = set()
@@ -152,12 +163,9 @@ def grade_totals(answer, ans_col, summary):
         print(f"  work/{name} (cột '{col}'): {len(agent_cat)} nhóm; " + ("khớp mọi nhóm" if not diff else f"lệch {diff}"))
         ok &= not diff
 
-    checks = [("total_products", sum(per_cat.values()), r"total.*product|product.*total|tong.*san_pham"),
-              ("total_categories", len(per_cat), r"total.*categor|n_categor|so.*nhom"),
-              ("max_count", top, r"max.*(count|n_|so)|(count|so).*max|top.*count")]
-    for label, exp, pattern in checks:
-        keys = [k for k, v in summary.items() if re.search(pattern, k, re.I) and isinstance(v, (int, float))
-                and not isinstance(v, bool)]
+    checks = [(TOTAL_PRODUCTS, sum(per_cat.values())), (TOTAL_CATEGORIES, len(per_cat)), (MAX_COUNT, top)]
+    for (label, pattern), exp in checks:
+        keys = numeric_keys(summary, label, pattern)
         got = [summary[k] for k in keys]
         good = bool(got) and all(g == exp for g in got)
         print(f"  {label}: cần {exp}, result_summary {dict(zip(keys, got)) or 'không có khóa'} -> {'ĐẠT' if good else 'RỚT'}")
@@ -190,9 +198,8 @@ def note_items(notes):
 HEADING = "tiêu đề, bỏ qua"
 
 
-def _num(summary, pattern):
-    return next((v for k, v in summary.items() if re.search(pattern, k, re.I) and isinstance(v, (int, float))
-                 and not isinstance(v, bool)), None)
+def _num(summary, key):
+    return next((summary[k] for k in numeric_keys(summary, *key)), None)
 
 
 def judge_note(item, agent_cat, summary, checks, table_ok):
@@ -208,7 +215,7 @@ def judge_note(item, agent_cat, summary, checks, table_ok):
     if re.search(r"đồng hạng|bằng nhau|\btie\b|hòa", low):
         return ("ĐẠT" if set(ids) <= max_ids else "RỚT"), f"agent báo đủ nhóm đồng hạng {ids}"
     if re.search(r"(lớn|nhiều|cao)\b.*\bnhất|max", low) and ids:
-        n = _num(summary, r"max.*(count|n_|so)|(count|so).*max|top.*count")
+        n = _num(summary, MAX_COUNT)
         codes = {x for x in max_ids if re.fullmatch(r"CAT\d+", x)}  # danh sach co the kem ten nhom, chi so ma
         good = set(ids) == codes and (not nums or n == nums[-1])
         return ("ĐẠT" if good else "RỚT"), f"nhóm lớn nhất của agent {sorted(max_ids)}, số {n}"
@@ -216,7 +223,7 @@ def judge_note(item, agent_cat, summary, checks, table_ok):
         got = agent_cat.get(ids[0])
         return ("ĐẠT" if got == nums[-1] else "RỚT"), f"agent: {ids[0]} = {got}"
     if re.search(r"tổng sản phẩm|tổng số sản phẩm", low) and nums:
-        got = _num(summary, r"total.*product|product.*total|tong.*san_pham")
+        got = _num(summary, TOTAL_PRODUCTS)
         return ("ĐẠT" if got == nums[-1] else "RỚT"), f"agent total_products = {got}"
     if re.search(r"tổng các phần|tổng toàn bộ", low):
         sums = [c for c in checks if re.search(r"total|sum|tổng", c.get("name", ""), re.I)]
