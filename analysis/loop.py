@@ -54,6 +54,10 @@ PLAN_CORRECTION_PROMPT = "Gõ góp ý (để trống để quay lại câu hỏi
 # go tiep sau mot cau tra loi, khong phai diem dung moi
 FOLLOW_UP_PROMPTS = (EDIT_PROMPT, CORRECTION_PROMPT, PLAN_CORRECTION_PROMPT)
 PLAN_QUESTION = "Chấp nhận danh sách câu hỏi nhỏ của kế hoạch?"
+PLAN_OPTIONS = "y = chấp nhận, s = gõ góp ý, n = dừng"
+FLAG_QUESTION = "Vẫn tiếp tục?"
+FLAG_OPTIONS = "y = chấp nhận, s = gõ góp ý để chạy lại câu này, n = dừng"
+NO_CORRECTION_OPTIONS = "y = chấp nhận, n = dừng"  # da het luot gop y
 PLAN_CORRECTION_PREFIX = "Góp ý kế hoạch: "  # phan biet voi chinh sua cach hieu de trong user_corrections
 
 
@@ -206,8 +210,9 @@ def _note_model(ctx, result):
         ctx.ledger.update_state(model=ctx.model)
 
 
-def _call(ctx, text, schema):
-    result = llm.ask_model([{"role": "user", "content": text}], role=ROLE, json_schema=schema, task_id=ctx.task)
+def _call(ctx, text, schema, use_cache=True):
+    result = llm.ask_model([{"role": "user", "content": text}], role=ROLE, json_schema=schema, task_id=ctx.task,
+                           use_cache=use_cache)
     _note_model(ctx, result)
     return result.data
 
@@ -538,15 +543,15 @@ def _save_plan_correction(ctx, text):
     ctx.ledger.update_state(plan=None, replaced_plan=ctx.ledger.get_state().plan)
 
 
-def _plan_answer(yes, ask_user, can_correct):
+def _correction_answer(question, options, yes, ask_user, can_correct):
     """Tra ve "y", "n" hoac noi dung gop y. Nhap khong hop le hoac gop y rong thi hoi lai, chi n moi dung.
     can_correct=False: da het luot gop y, chi con y/n."""
     if yes:
-        print(f"{PLAN_QUESTION} [y/s/n] y (--yes)")
+        print(f"{question} [y/s/n] y (--yes)")
         return "y"
-    options = "y = chấp nhận, s = gõ góp ý, n = dừng" if can_correct else "y = chấp nhận, n = dừng"
+    options = options if can_correct else NO_CORRECTION_OPTIONS
     while True:
-        answer = ask_user(f"{PLAN_QUESTION} [{options}] ").strip().lower()
+        answer = ask_user(f"{question} [{options}] ").strip().lower()
         if answer in YES:
             return "y"
         if answer in NO:
@@ -567,7 +572,7 @@ def accept_plan(ctx, plan, yes, ask_user):
         can_correct = attempt < config.ANALYSIS_PLAN_MAX_RETRIES
         if not can_correct:
             print("Đã hết lượt góp ý cho kế hoạch.")
-        answer = _plan_answer(yes, ask_user, can_correct)
+        answer = _correction_answer(PLAN_QUESTION, PLAN_OPTIONS, yes, ask_user, can_correct)
         if answer == "y":
             require_confirmed(ctx)
             ctx.ledger.log_event("analysis", "confirm_plan", extra={"n_decisions": len(ctx.decisions)})
@@ -676,14 +681,22 @@ def _short_decisions(ctx):
     return short_decisions(ctx.ledger)
 
 
+def _redo_notes(ctx):
+    state = ctx.ledger.get_state()
+    return state.redo_notes if state else {}
+
+
 def _step_prompt(ctx, q, results_by_key, feedback):
+    notes = _redo_notes(ctx).get(q.key, [])
     variables = {"confirmed_decisions": "\n".join(ctx.decisions) or "(none)",
                  "confirmed_understanding": _confirmed_understanding(ctx),
                  "previous_results": _previous_results(ctx, results_by_key),
-                 "question": f"{q.key}: {q.question}", "error_feedback": feedback}
+                 "question": f"{q.key}: {q.question}", "error_feedback": feedback,
+                 "user_corrections": _corrections_text(notes, config.CONTEXT_CORRECTIONS_MAX_CHARS)}
     keep = {results_by_key[d] for d in q.depends_on if d in results_by_key}
     shortened = {"previous_results": _short_previous(ctx, results_by_key, keep),
                  "error_feedback": feedback[-config.ANALYSIS_FEEDBACK_SHORT_CHARS:],
+                 "user_corrections": _corrections_text(notes, config.CONTEXT_CORRECTIONS_SHORT_CHARS),
                  "confirmed_decisions": _short_decisions(ctx),
                  "confirmed_understanding": _confirmed_understanding(ctx, short=True),
                  context_builder.SUMMARY: _summary_cut(ctx)}
@@ -701,12 +714,71 @@ def _rel(ctx, path):
         return str(path)
 
 
+def retire_result(ledger, result_id, note=None):
+    """Bo ket qua de chay lai: result_id superseded, phu thuoc stale, file cua chung sang work/_superseded/, decision
+    "chap nhan R.. du co co" cua chung superseded, ghi cau can chay lai vao state. Tra ve id bi stale."""
+    stale = ledger.mark_stale(result_id)
+    retired = [result_id, *stale]
+    ledger.archive_result_files(retired)
+    for rid in retired:
+        ledger.supersede_decisions(f"{ACCEPT_FLAGS_KEY}{rid}")
+    notes = dict(ledger.get_state().redo_notes)
+    by_id = {r.id: r for r in ledger.results()}
+    for rid in retired:
+        notes.setdefault(by_id[rid].question_key, [])
+    if note:
+        key = by_id[result_id].question_key
+        notes[key] = [*notes[key], note]
+    ledger.update_state(redo_notes=notes)
+    return stale
+
+
+def _finish_redo(ctx, key):
+    notes = _redo_notes(ctx)
+    if key in notes:
+        ctx.ledger.update_state(redo_notes={k: v for k, v in notes.items() if k != key})
+
+
 def solve_question(ctx, q, results_by_key, max_retries, yes, ask_user):
-    """Giai mot cau hoi; tra ve id result. Het so lan thu / nguoi dung chon n -> StopLoop."""
+    """Giai mot cau hoi; tra ve id result. Ket qua co co ma nguoi dung chon s: bo ket qua, giai lai voi gop y, toi da
+    ANALYSIS_PLAN_MAX_RETRIES lan. Het so lan thu / nguoi dung chon n -> StopLoop."""
+    for attempt in range(config.ANALYSIS_PLAN_MAX_RETRIES + 1):
+        entry, flagged = _solve_attempts(ctx, q, results_by_key, max_retries, yes, ask_user)
+        can_correct = attempt < config.ANALYSIS_PLAN_MAX_RETRIES
+        note = _flag_stop(ctx, q, entry, flagged, can_correct, yes, ask_user) if flagged else None
+        if note is None:
+            _finish_redo(ctx, q.key)
+            return entry.id
+        retire_result(ctx.ledger, entry.id, note)
+        ctx.decisions = [_decision_line(x) for x in ctx.ledger.decisions() if x.status == DecisionStatus.CONFIRMED]
+        ctx.ledger.log_event("analysis", "correct_result", inputs={"question": q.key}, extra={"result_id": entry.id})
+
+
+def _flag_stop(ctx, q, entry, flagged, can_correct, yes, ask_user):
+    """Diem dung ket qua co co. Tra ve gop y (chon s) hoac None (chon y); chon n -> StopLoop, ket qua giu trong so."""
+    # pending truoc khi hoi: tra loi n thi chay lai se hoi lai, khong lang le di tiep
+    d = _add_pending(ctx, "anomaly_handling", f"chấp nhận {entry.id} dù có cờ {', '.join(flagged)}",
+                     source_key=f"{ACCEPT_FLAGS_KEY}{entry.id}")
+    if not can_correct:
+        print(f"{q.key}: đã hết lượt góp ý.")
+    answer = _correction_answer(FLAG_QUESTION, FLAG_OPTIONS, yes, ask_user, can_correct)
+    if answer == "y":
+        _confirm_decision(ctx, d)
+        return None
+    if answer == "n":
+        _finish_redo(ctx, q.key)
+        ctx.ledger.add_open_item_once(PENDING_OPEN_ITEM)
+        raise StopLoop(f"Dừng sau {entry.id} theo yêu cầu (có cờ).")
+    return answer
+
+
+def _solve_attempts(ctx, q, results_by_key, max_retries, yes, ask_user):
+    """Goi AI, chay code, cham meta toi khi dat roi ghi so; tra ve (entry, ten cac check co co). Het so lan thu -> StopLoop."""
     step_name = f"{_next_result_id(ctx.ledger)}_{q.key}"
     feedback = ""
+    use_cache = q.key not in _redo_notes(ctx)  # chay lai: khong lay lai dung cau tra loi cu khi prompt trung
     for attempt in range(1, max_retries + 2):
-        step = _call(ctx, _step_prompt(ctx, q, results_by_key, feedback), AnalysisStep)
+        step = _call(ctx, _step_prompt(ctx, q, results_by_key, feedback), AnalysisStep, use_cache=use_cache)
         if step.cannot_answer_reason:
             ctx.ledger.add_open_item(f"{q.key}: AI báo không trả lời được: {step.cannot_answer_reason}")
             raise StopLoop(f"{q.key}: AI báo không trả lời được.")
@@ -753,21 +825,14 @@ def _record(ctx, q, step, run, grade, results_by_key, yes, ask_user):
     ctx.switched_from = None
     ctx.ledger.log_event("analysis", "result", inputs={"question": q.key}, code_file=entry.code_file,
                          status="flag" if grade.flags else "ok", extra={"result_id": entry.id})
+    names = [c["name"] for c in grade.checks if c["status"] == "flag"]
     if grade.flags:
         print(f"{q.key} ({entry.id}) có cờ:")
         for f in grade.flags:
             print(f"  - {f}")
-        names = [c["name"] for c in grade.checks if c["status"] == "flag"]
         ctx.ledger.add_finding(f"{entry.id} có {len(grade.flags)} check bị cờ: " + "; ".join(names),
                                "hypothesis", result_ids=[entry.id])
-        # pending truoc khi hoi: tra loi n thi chay lai se hoi lai, khong lang le di tiep
-        d = _add_pending(ctx, "anomaly_handling", f"chấp nhận {entry.id} dù có cờ {', '.join(names)}",
-                         source_key=f"{ACCEPT_FLAGS_KEY}{entry.id}")
-        if not confirm("Vẫn tiếp tục?", yes, ask_user):
-            ctx.ledger.add_open_item_once(PENDING_OPEN_ITEM)
-            raise StopLoop(f"Dừng sau {entry.id} theo yêu cầu (có cờ).")
-        _confirm_decision(ctx, d)
-    return entry.id
+    return entry, names
 
 
 # ---------- tong hop ----------

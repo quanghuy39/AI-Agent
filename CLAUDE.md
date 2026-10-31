@@ -59,6 +59,7 @@ python -m runner.run_code bai1 path\to\code.py [--step TEN] [--timeout GIAY]
 python main.py bai1 [--sensitive BANG.cot] [--restart] [--yes] [--fake] [--no-sync]   # chạy một bài, tiếp từ pha đang dở
 python main.py bai1 --resynthesize [--yes] [--fake] [--no-sync]   # chỉ chạy lại pha synthesize (state synthesize hoặc done)
 python main.py bai1 --build-report [--fake] [--no-sync]   # dựng lại biểu đồ, Word, hồ sơ, dàn ý từ insights.json, không gọi AI (state done)
+python main.py bai1 --redo R3 [--note "góp ý"] [--yes] [--fake] [--no-sync]   # chạy lại một kết quả valid và các kết quả phụ thuộc, rồi tổng hợp lại
 python -m analysis.loop bai1 [--sensitive BANG.cot] [--use-fake] [--max-retries 3] [--yes] [--no-sync]   # cùng luồng main.py
 python -m storage.sync bai1 [--dry-run]               # đồng bộ hồ sơ lên R2; --dry-run chỉ in số file, không ghi gì
 python -m tests.grade_bai0b                           # chấm profiling bài 0b bằng answers/ (quyền grader)
@@ -82,7 +83,11 @@ decision khác giữ nguyên; pha sớm hơn thì từ chối, mã 3; không dù
 `--build-report` không dùng cùng `--restart`, `--resynthesize`, `--sensitive`.
 Báo cáo dựng sau khi chấp nhận kết luận, ở `output/<bài>/report/`: `bao_cao_<bài>.docx`, `ho_so_<bài>.md`, `slides_outline.json`,
 `charts/<insight>.png`; lỗi dựng báo cáo không đổi state done, sửa rồi `--build-report`. `REPORT_AUTHOR` trong `.env` là tùy chọn.
-`--restart`, `--resynthesize`, `--build-report`: file trong `report/` đang bị khóa (mở trong Word) thì dừng trước mọi thao tác ghi,
+`--redo`: in danh sách rồi hỏi y/n trước khi đổi gì; kết quả thành superseded, phụ thuộc stale (`retire_result`), file của chúng sang
+`work/_superseded/`, câu cần chạy lại và góp ý ở `state.redo_notes` (không dùng cache), rồi về pha loop; không dùng cùng `--restart`,
+`--resynthesize`, `--build-report`, `--sensitive`. Dừng giữa chừng thì chạy lại không có cờ. Điểm dừng có cờ: y, s (góp ý, chạy lại câu đó,
+tối đa `ANALYSIS_PLAN_MAX_RETRIES` lần), n.
+`--restart`, `--resynthesize`, `--build-report`, `--redo`: file trong `report/` đang bị khóa (mở trong Word) thì dừng trước mọi thao tác ghi,
 mã 3, không đổi gì, kể cả run_log.
 Đồng bộ R2 (trừ `--fake`, `--no-sync`): trước mỗi câu hỏi xác nhận, khi xong và khi thoát vì lỗi; lỗi đồng bộ chỉ cảnh
 báo một dòng, ghi sự kiện `sync` trong run_log, lần sau tải lại nhờ manifest. `run_task` gọi trực tiếp thì mặc định tắt.

@@ -21,6 +21,9 @@ $question
 # Errors from the previous attempt (fix them; empty on the first attempt)
 $error_feedback
 
+# User corrections for this question (they take priority; apply all of them)
+$user_corrections
+
 $contract
 
 # Your answer

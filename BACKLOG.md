@@ -16,8 +16,9 @@ Cập nhật: 31/10/2026, sau nghiệm thu Ngày 8. Mỗi mục: vấn đề –
 
 ### Điểm dừng và sửa kết quả
 - Join nổ dòng mà vẫn cho đi tiếp – R13 280.103 → 9.900.061 dòng (34 lần), người dùng trả lời `y` (D26), kết quả vẫn `valid` – join nhiều-nhiều không khai `expected_ratio` thì gửi lại AI trước khi hỏi, buộc nêu lý do và cách chống đếm trùng.
-- Điểm dừng có cờ chỉ có y/n – `loop.py` dòng 766: `add_result` chạy trước câu hỏi, `n` chỉ dừng, chạy lại hỏi lại đúng câu đó – thêm lựa chọn `s` gõ yêu cầu sửa, đánh dấu kết quả superseded rồi giải lại câu đó.
-- Chưa chạy lại được một bước theo thiết kế 8.5 – `mark_stale` chỉ có test gọi, không có cờ CLI nào, sửa R13 và R15 chỉ còn `--restart` toàn bộ – thêm `--redo <R id|Q key>`: superseded bước đó, stale phụ thuộc, hỏi rồi chỉ chạy lại phần này.
+
+### An toàn dữ liệu
+- File trung gian chứa `customer_id` thô trên R2 `output/`: bắt buộc sửa trước khi dùng dữ liệu công ty – `temp_touches.csv`, `temp_orders.csv` (41 MB) của R13 nằm ở `output/bai2/work/`, AI tự ghi để phép kiểm join đọc lại – phép kiểm join nhận cột cần thiết, chặn đồng bộ file `work/` có cột che, dọn file đã có trên R2 kèm sửa manifest.
 
 ### Tổng hợp báo cáo
 - Insight rỗng ở yêu cầu đề xuất – I6 "...dựa trên tệp kết quả đề xuất được tạo là có": `result_summary` của R15 chỉ có 2 số đếm và 1 cờ true, đề xuất nằm trong csv mà AI tổng hợp không thấy – bắt buộc `result_summary` chứa nội dung trả lời, đưa dòng đã che của bảng kết quả nhỏ vào prompt synthesize.
@@ -52,7 +53,9 @@ Cập nhật: 31/10/2026, sau nghiệm thu Ngày 8. Mỗi mục: vấn đề –
 ### Phân tích
 - Code bước sau đoán sai tên cột file bước trước – Q3 `KeyError: 'total_touches'`, Q5 `KeyError: 'touch_count'`, tốn 2 lượt AI (31.011 token cho hai câu) – đưa danh sách cột của file bước trước vào prompt step.
 - Runner không ghi stderr vào run_log – lỗi lần 1 của Q3, Q5 phải tái tạo mới biết – ghi dòng cuối stderr đã che vào `step_attempt`.
-- File trung gian lớn – `temp_touches.csv`, `temp_orders.csv` (41 MB) nằm trong `work/`, có `customer_id` thô, lên R2 và nằm trong `output_path` của R13 – phép kiểm join nhận cột cần thiết, đặt giới hạn cỡ file `work/`.
+- File `work/` không có giới hạn cỡ – file trung gian 41 MB của R13 nằm trong `output_path` – đặt giới hạn cỡ file `work/`.
+- Giả định cũ còn hiệu lực sau `--redo` – decision do bước cũ thêm (`new_assumptions`) không gắn với kết quả nên vẫn confirmed và gửi cho AI – lưu id kết quả trong decision, superseded cùng kết quả.
+- Sau `n` ở điểm dừng có cờ, lần chạy sau hỏi lại qua "Xử lý dữ liệu bất thường", `s` ở đó là sửa chữ của decision, không chạy lại câu – hiện dùng `--redo` – gộp về cùng điểm dừng y/s/n.
 - Dictionary bài 1, 2 nhắc bảng EXTERNAL_FACTOR, PRICE_CHANGE không có trong dữ liệu – `data_dictionary.md` – profiling ghi lưu ý hoặc sửa nguồn.
 - Kế hoạch dồn nhiều yêu cầu vào 1 câu hỏi – log các lần chạy – thêm phép kiểm độ phủ.
 - Decision trùng ý (D6, D7 `bai0a`) – pha giải – so trùng trước khi thêm.

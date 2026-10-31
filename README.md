@@ -120,10 +120,31 @@ python main.py <bài> --sensitive BANG.cot # thêm cột che, chốt ở lần c
 python main.py <bài> --restart            # làm lại từ đầu, kết quả và decision cũ thành superseded
 python main.py <bài> --resynthesize       # chỉ chạy lại pha tổng hợp (pha synthesize hoặc done)
 python main.py <bài> --build-report       # dựng lại Word, biểu đồ từ insights.json, không gọi AI (pha done)
+python main.py <bài> --redo R13 [--note "góp ý"]  # chạy lại một kết quả và các kết quả phụ thuộc, rồi tổng hợp lại
 python main.py <bài> --no-sync            # không đồng bộ lên R2
 python main.py <bài> --fake               # chạy thử bằng FakeLLM
 python -m storage.sync <bài> [--dry-run]  # đồng bộ tay, ví dụ sau khi lỗi mạng
 ```
+
+### Chạy lại một bước sai (`--redo`)
+
+```powershell
+python main.py bai2 --redo R13 --note "Đếm mỗi đơn một lần, nêu rõ đơn gán cho nhiều chiến dịch"
+```
+
+Lệnh này in danh sách kết quả sẽ chạy lại (kết quả đó và mọi kết quả valid phụ thuộc nó theo `depends_on`) rồi hỏi y/n. Trả lời `n` thì
+hồ sơ không đổi. Trả lời `y` thì:
+
+1. Bản tổng hợp và `report/` cũ sang `_superseded/`, decision chấp nhận kết luận thành superseded, như `--resynthesize`.
+2. Kết quả đó thành `superseded`, kết quả phụ thuộc thành `stale`, file của chúng sang `work/_superseded/<thời điểm>/`, decision "chấp nhận
+   R.. dù có cờ" của chúng thành superseded.
+3. Agent chỉ giải lại các câu đó, không dùng cache, kết quả valid khác giữ nguyên. `--note` chỉ gửi cho câu của kết quả được chỉ định.
+   Giả định mới vẫn qua điểm dừng như bình thường.
+4. Xong thì tổng hợp, hỏi chấp nhận kết luận và dựng lại báo cáo.
+
+Chỉ dùng được với kết quả `valid` từ pha loop trở đi; id sai hoặc kết quả đã `superseded`, `stale` thì dừng mã 3. Không dùng cùng
+`--restart`, `--resynthesize`, `--build-report`, `--sensitive`. File báo cáo đang mở hoặc dictionary đã đổi thì dừng trước khi đổi gì.
+Dừng giữa chừng (hết hạn mức, `n`, Ctrl+C) thì chạy `python main.py <bài>` để tiếp tục, góp ý vẫn được giữ, không chạy lại `--redo`.
 
 `--fake` không gọi AI, không đồng bộ, ghi vào `output/_fake/<bài>/` và không đụng hồ sơ thật. Nếu `--fake` dừng mã 3 do
 profile cũ thì xóa `output/_fake/<bài>/data_profile.json` rồi chạy lại. `--yes` tự trả lời y, chỉ dùng khi thử.
@@ -143,12 +164,13 @@ profile cũ thì xóa `output/_fake/<bài>/data_profile.json` rồi chạy lại
 | Định nghĩa chỉ số, xử lý dữ liệu bất thường | `y` đồng ý, `s` gõ nội dung khác, `n` dừng |
 | Giả định khác | `y` chấp nhận tất cả, số thứ tự để sửa mục đó, `n` dừng |
 | Danh sách câu hỏi nhỏ của kế hoạch | `y` chấp nhận, `s` gõ góp ý để AI lập lại, `n` dừng |
-| "Vẫn tiếp tục?" khi kết quả có cờ | `y` chấp nhận kết quả có cờ, `n` dừng |
+| "Vẫn tiếp tục?" khi kết quả có cờ | `y` chấp nhận kết quả có cờ, `s` gõ góp ý để chạy lại câu này (tối đa 3 lần), `n` dừng |
 | Chấp nhận kết luận | `y` dựng báo cáo, `n` dừng |
 
-**Khi kết quả có cờ, nên trả lời `n`** rồi đọc cờ, đừng trả lời `y` theo thói quen: `y` ghi nhận bạn chấp nhận kết quả đó và
-các bước sau sẽ dùng nó. Cần biết giới hạn hiện tại: `n` chỉ dừng lại, kết quả đã nằm trong sổ, chạy lại sẽ hỏi lại đúng câu đó.
-Chưa có lệnh sửa riêng một bước, muốn sửa phải dùng `--restart`.
+**Khi kết quả có cờ, đọc cờ trước, đừng trả lời `y` theo thói quen:** `y` ghi nhận bạn chấp nhận kết quả đó và các bước sau sẽ dùng nó.
+Cờ cho thấy cách làm sai thì chọn `s` và gõ cách sửa: kết quả vừa ghi thành superseded, kết quả phụ thuộc thành stale, agent giải lại câu
+đó kèm góp ý. Hết 3 lượt góp ý thì chỉ còn `y`, `n`. Cần thời gian xem kỹ thì chọn `n` để dừng: kết quả vẫn nằm trong sổ, lần chạy sau hỏi
+lại ở mục xử lý dữ liệu bất thường, tại đó `s` chỉ sửa chữ của decision; muốn giải lại câu đó thì dùng `--redo`.
 
 ## Đọc hồ sơ
 

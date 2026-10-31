@@ -127,7 +127,7 @@ def test_analysis_prompt_is_real_skill():
     assert text == render_prompt("step", problem=case.user, data_summary=synth_data.data_summary_text(),
                                  confirmed_decisions="(none)", confirmed_understanding="(none)",
                                  previous_results="Files in output directory: (none)",
-                                 question=f"Q1: {case.user}", error_feedback="")
+                                 question=f"Q1: {case.user}", error_feedback="", user_corrections="(none)")
     assert load_prompt("contract").strip() in text and "AGENT_META_PATH" in text
     assert "## orders (rows 400" in text and "order_date: date %d-%m-%Y" in text  # data summary cua du lieu gia
     assert "Kiểm tra khóa trùng" not in text and "./data" not in text and "result.json" not in text

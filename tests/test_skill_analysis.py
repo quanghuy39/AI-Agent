@@ -17,7 +17,7 @@ UNDERSTAND_VARS = {"problem": "", "previous_restatement": "", "user_corrections"
 PLAN_VARS = {"problem": "", "data_summary": "", "confirmed_understanding": ""}
 STEP_VARS = {"problem": "", "data_summary": "", "confirmed_understanding": "", "confirmed_decisions": "",
              "previous_results": "",
-             "question": "", "error_feedback": ""}
+             "question": "", "error_feedback": "", "user_corrections": ""}
 ASSUMPTION = {"kind": "metric_definition", "text": "Doanh thu = tổng amount của đơn hoàn tất", "required": True}
 
 

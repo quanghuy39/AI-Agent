@@ -18,7 +18,8 @@ SUMMARY = "data_summary"
 PROMPT_CUTS = {
     "understand": ("previous_restatement", "user_corrections"),
     "plan": ("confirmed_understanding", SUMMARY),
-    "step": ("previous_results", "error_feedback", "confirmed_decisions", "confirmed_understanding", SUMMARY),
+    "step": ("previous_results", "error_feedback", "user_corrections", "confirmed_decisions",
+             "confirmed_understanding", SUMMARY),
     # ban rut gon cua results chi bo method va ten cot, result_summary van du khoa va gia tri; error_feedback khong cat
     "synthesize": ("previous_answer", "quality_flags", "confirmed_decisions", "results"),
 }

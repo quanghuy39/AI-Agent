@@ -13,7 +13,7 @@ Cập nhật: 31/10/2026. Nguồn: git log, code trong repo, tóm tắt cuối n
 | 5 | Xong | Runner, skill phân tích, meta_grader, `analysis.loop`, fit_prompt, bộ kiểm định theo skill thật; chốt chuỗi analysis. Bài 0a ĐẠT toàn bộ; bài 1 chạy trọn 4 câu, số liệu đúng, phán đoán BI chưa đạt. 645 test pass. |
 | 6 | Xong | Điều phối theo pha, chạy tiếp được, `--fake` tách hồ sơ, điểm dừng xác nhận, decision pending và superseded, cờ chất lượng thành decision, `context_builder`, đồng bộ hồ sơ lên R2, 5 quy tắc chung trong prompt, `tests.grade <bài>`. Bài 2 chạy thật: số tổng hợp khớp, phán đoán BI chưa đạt. 858 test pass. |
 | 7 | Xong | Kiểm định report; pha synthesize; `output_path` đủ file bảng; biểu đồ, Word, hồ sơ bài toán, dàn ý slide, `--resynthesize`, `--build-report`. Bài 0a chạy thật: `grade_bai0a` ĐẠT 3/3, Word đủ 7 mục, không còn placeholder trong Word và `slides_outline.json`, mọi insight dẫn về id kết quả. 1239 test pass, commit cuối 2fb62a9. |
-| 8 | Xong | Cột nhạy cảm khai báo trong dictionary, profile lưu etag dictionary. Bài 2 chạy thật: số liệu đúng, phán đoán BI chưa đạt. Nghiệm thu 4 Đạt, 4 Một phần (số liệu đúng ở cả hai bài test, phán đoán BI bài 2 Không). README, BACKLOG. 1251 test pass. |
+| 8 | Xong | Cột nhạy cảm khai báo trong dictionary, profile lưu etag dictionary. Bài 2 chạy thật: số liệu đúng, phán đoán BI chưa đạt. Nghiệm thu 5 Đạt, 3 Một phần (số liệu còn hai lỗi ở bài 2, phán đoán BI bài 2 Không). `--redo`, lựa chọn `s` ở điểm dừng có cờ. README, BACKLOG. 1282 test pass. |
 
 ## Ngày 5
 
@@ -385,14 +385,24 @@ Nghiệm thu 8 tiêu chí:
 
 | # | Tiêu chí | Kết quả |
 |---|---|---|
-| 1 | Đáp án đúng, số truy vết được | Một phần: số liệu Đạt, phán đoán BI bài 2 Không |
+| 1 | Đáp án đúng, số truy vết được | Một phần: số liệu Một phần (Bảng 5 gán sai nghĩa cột, `campaigns_bring_orders` gõ cứng), phán đoán BI bài 2 Không |
 | 2 | Bắt dữ liệu lỗi | Một phần: 0b 5/5, nhưng lỗi thời gian bài 2 không bắt |
-| 3 | Sửa một bước chỉ stale phần phụ thuộc | Một phần: `mark_stale` đúng, luồng chạy chưa gọi |
+| 3 | Sửa một bước chỉ stale phần phụ thuộc | Đạt (đánh giá lại ở vòng 4): `--redo` và `s` ở điểm dừng có cờ gọi `mark_stale`; chưa thử trên bài thật với AI thật |
 | 4 | Dừng rồi chạy tiếp | Đạt |
 | 5 | Đổi model chỉ qua `llm.yaml`, `.env` | Đạt |
 | 6 | 429, 5xx chuyển model; 401, 403, 400 không | Đạt |
 | 7 | Chỉ model đã kiểm định; log đủ | Một phần: log Đạt, 3/4 model analysis chưa validated |
 | 8 | Hết chuỗi dừng an toàn | Đạt |
+
+Vòng 4, chạy lại một bước (thiết kế 8.5):
+- `python main.py <bài> --redo <Rid> [--note "góp ý"]`: kiểm báo cáo khóa và etag, in danh sách, hỏi y/n trước khi đổi gì. Đồng ý thì
+  làm như `--resynthesize`, về pha loop, `retire_result` (superseded, stale qua `mark_stale`, chuyển file, bỏ decision "chấp nhận R.. dù có cờ").
+- `_phase_loop` tự giải các câu không còn kết quả valid, nên không có luồng riêng. Câu cần chạy lại và góp ý ở `state.redo_notes`: giữ qua dừng
+  giữa chừng, câu trong đó không dùng cache vì prompt có thể trùng lần cũ. Góp ý vào biến `user_corrections` của `step.md`, cắt theo trần hiện có.
+- "Vẫn tiếp tục?" có thêm `s`: gõ góp ý, kết quả superseded, chạy lại câu đó, tối đa `ANALYSIS_PLAN_MAX_RETRIES` lần.
+- `task_id` vẫn theo bài như câu thường, không theo câu: phát hiện đổi model (`set_task_model`) dựa vào đó.
+- `step.md` đổi nên prompt của bộ kiểm định analysis cũng đổi (thêm mục rỗng).
+- Thử `python main.py bai0b --fake --redo R3 --yes`: mã 0, R3 superseded, R4 valid, dựng lại đủ báo cáo.
 
 ## Quyết định đã chốt
 - Cờ info (31/10/2026): không sửa. Thiết kế 7.2 quy định cờ info không tạo điểm dừng riêng, chỉ liệt kê ở điểm dừng xử lý bất

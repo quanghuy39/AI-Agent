@@ -238,9 +238,8 @@ class Ledger:
         self._write_models(RESULTS, results + [entry])
         return entry
 
-    def mark_stale(self, result_id):
-        """Dat result_id thanh superseded; moi ket qua phu thuoc (truc tiep hoac gian tiep) dang valid
-        thanh stale. Tra ve id bi doi thanh stale, theo thu tu id."""
+    def valid_dependents(self, result_id):
+        """Id cac ket qua valid phu thuoc result_id (truc tiep hoac gian tiep), theo thu tu id. Chi doc, khong doi so."""
         results = self.results()
         by_id = {r.id: r for r in results}
         if result_id not in by_id:
@@ -251,7 +250,6 @@ class Ledger:
             for dep in r.depends_on:
                 dependents.setdefault(dep, []).append(r.id)
 
-        by_id[result_id].status = ResultStatus.SUPERSEDED
         affected = []
         seen = {result_id}
         queue = deque([result_id])
@@ -262,13 +260,45 @@ class Ledger:
                 seen.add(child)
                 queue.append(child)
                 if by_id[child].status == ResultStatus.VALID:
-                    by_id[child].status = ResultStatus.STALE
                     affected.append(child)
+        return sorted(affected, key=_id_number)
 
-        affected.sort(key=_id_number)
+    def mark_stale(self, result_id):
+        """Dat result_id thanh superseded; moi ket qua phu thuoc (truc tiep hoac gian tiep) dang valid
+        thanh stale. Tra ve id bi doi thanh stale, theo thu tu id."""
+        affected = self.valid_dependents(result_id)
+        results = self.results()
+        for r in results:
+            if r.id == result_id:
+                r.status = ResultStatus.SUPERSEDED
+            elif r.id in affected:
+                r.status = ResultStatus.STALE
         self._write_models(RESULTS, results)
         self.log_event("ledger", "mark_stale", inputs={"result_id": result_id}, extra={"stale": affected})
         return affected
+
+    def archive_result_files(self, result_ids):
+        """Chuyen file cua cac ket qua vao work/_superseded/<thoi diem>/ de buoc sau khong doc nham, khong xoa. Giu file
+        ma ket qua valid khac con dung. output_path tro toi cho moi. Tra ve {"work/a.csv": duong dan moi}."""
+        results = self.results()
+        in_use = {p for r in results if r.status == ResultStatus.VALID for p in (r.output_path or "").split("; ")}
+        dest = self.root / WORK_DIR / SUPERSEDED_DIR / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        moved = {}
+        for r in results:
+            if r.id not in result_ids or not r.output_path:
+                continue
+            for p in r.output_path.split("; "):
+                path = self.root / p
+                if p in in_use or p in moved or not p.startswith(f"{WORK_DIR}/") or SUPERSEDED_DIR in Path(p).parts \
+                        or not path.is_file():
+                    continue
+                target = dest / path.relative_to(self.root / WORK_DIR)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(path, target)
+                moved[p] = target.relative_to(self.root).as_posix()
+            r.output_path = "; ".join(moved.get(p, p) for p in r.output_path.split("; "))
+        self._write_models(RESULTS, results)
+        return moved
 
     def _archive_work(self):
         """Chuyen moi file trong work/ (tru _superseded/) vao work/_superseded/<thoi diem>/, khong xoa.

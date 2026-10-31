@@ -183,6 +183,8 @@ class RunState(_Model):
     replaced_plan: dict[str, Any] | None = None  # ke hoach nguoi dung gop y sua, giu toi khi co ke hoach moi
     sensitive: list[str] | None = None  # cot che "BANG.cot" cua lan chay dau; None: chua chot
     model: str | None = None  # model da dung gan nhat, de so doi model khi chay tiep o tien trinh moi
+    # cau dang chay lai (--redo, s o diem dung co co): {question_key: [gop y]}, giu qua dung giua chung, xoa khi xong cau
+    redo_notes: dict[str, list[str]] = Field(default_factory=dict)
     updated_at: str = Field(default_factory=now_iso)
 
     @field_validator("updated_at")

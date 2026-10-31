@@ -44,7 +44,7 @@ def analysis_prompt(case):
     return render_prompt("step", problem=case.user, data_summary=synth_data.data_summary_text(),
                          confirmed_decisions="(none)", confirmed_understanding="(none)",
                          previous_results="Files in output directory: (none)",
-                         question=f"Q1: {case.user}", error_feedback="")
+                         question=f"Q1: {case.user}", error_feedback="", user_corrections="(none)")
 
 
 def user_content(case):

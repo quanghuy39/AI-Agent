@@ -642,3 +642,279 @@ def test_yes_prints_warning_only_with_yes(env, capsys):
     Ledger(env.root).set_state(Phase.DONE)
     run([], yes=False, ask_user=Answers())
     assert "tự xác nhận mọi decision" not in capsys.readouterr().out
+
+
+# 11. chay lai mot buoc (--redo) va s o diem dung co co
+NOTE = "Bỏ các dòng mẫu"
+CHAIN_PLAN = {"understanding": "Chuỗi ba bước và một câu độc lập.", "requirements": ["A", "B", "C", "D"],
+              "sub_questions": [{"key": "Q1", "question": "Câu một?", "covers": [1]},
+                                {"key": "Q2", "question": "Câu hai?", "depends_on": ["Q1"], "covers": [2]},
+                                {"key": "Q3", "question": "Câu ba?", "depends_on": ["Q2"], "covers": [3]},
+                                {"key": "Q4", "question": "Câu bốn?", "covers": [4]}],
+              "assumptions": []}
+CHAIN_FULL = [RESTATEMENT, CHAIN_PLAN, step("q1"), step("q4"), step("q2"), step("q3")]  # Q1 = R1, Q4 = R2, Q2 = R3, Q3 = R4
+FLAG_ASK = "tiếp tục"
+NOTE_ASK = "Gõ góp ý"
+
+
+def result_statuses(led):
+    return {r.id: r.status.value for r in led.results()}
+
+
+def prompts_of(fake):
+    return [c["messages"][0]["content"] for c in fake.calls]
+
+
+def snapshot(led):
+    state = led.get_state().model_dump()
+    state.pop("updated_at")
+    report = sorted(p.name for p in (led.root / "report").rglob("*") if p.is_file())
+    work = sorted(p.name for p in (led.root / "work").rglob("*") if p.is_file())
+    return state, [r.model_dump() for r in led.results()], [d.model_dump() for d in led.decisions()], \
+        led.get_insights(), report, work
+
+
+def test_redo_r2_of_chain_r1_r2_r3_keeps_r1_valid(env):
+    plan = {**CHAIN_PLAN, "requirements": ["A", "B", "C"], "sub_questions": CHAIN_PLAN["sub_questions"][:3]}
+    run([RESTATEMENT, plan, step("q1"), step("q2"), step("q3")])
+    code, fake = run([step("q2b"), step("q3b")], redo="R2")
+    assert code == loop.DONE and len(fake.calls) == 2
+    assert result_statuses(env) == {"R1": "valid", "R2": "superseded", "R3": "stale", "R4": "valid", "R5": "valid"}
+    assert env.get_result("R4").depends_on == ["R1"] and env.get_result("R5").depends_on == ["R4"]
+
+
+def test_redo_chain_reruns_only_dependents(env):
+    assert run(CHAIN_FULL)[0] == loop.DONE
+    code, fake = run([step("q2b"), step("q3b")], redo="R3")
+    assert code == loop.DONE and [p.split("# Current question\n")[1][:2] for p in prompts_of(fake)] == ["Q2", "Q3"]
+    assert result_statuses(env) == {"R1": "valid", "R2": "valid", "R3": "superseded", "R4": "stale",
+                                    "R5": "valid", "R6": "valid"}
+    assert env.results_by_question() == {"Q1": "R1", "Q4": "R2", "Q2": "R5", "Q3": "R6"}
+    assert env.get_result("R5").depends_on == ["R1"] and env.get_result("R6").depends_on == ["R5"]
+    assert env.get_state().phase == Phase.DONE and env.get_state().redo_notes == {}
+    assert env.get_insights() is not None and (env.root / "report" / f"bao_cao_{TASK}.docx").is_file()
+    assert sum(1 for d in env.decisions() if d.source_key == app.CONCLUSION_KEY and d.status.value == "confirmed") == 1
+
+
+def test_redo_keeps_independent_result_untouched_and_moves_old_files(env):
+    run(CHAIN_FULL)
+    before = {r: env.get_result(r).model_dump() for r in ("R1", "R2")}
+    run([step("q2b"), step("q3b")], redo="R3")
+    assert {r: env.get_result(r).model_dump() for r in ("R1", "R2")} == before
+    work = env.root / "work"
+    assert {p.name for p in work.glob("*.csv")} == {"q1.csv", "q2b.csv", "q3b.csv", "q4.csv"}
+    moved = env.get_result("R3").output_path
+    assert "_superseded" in moved and (env.root / moved).is_file()
+    assert "_superseded" in env.get_result("R4").output_path
+
+
+def test_redo_does_not_use_cache_only_for_rerun_questions(env):
+    run(CHAIN_FULL)
+    _, fake = run([step("q2b"), step("q3b")], redo="R3")
+    assert [c["use_cache"] for c in fake.calls] == [False, False]
+    _, first = run(CHAIN_FULL, restart=True)
+    assert all(c["use_cache"] for c in first.calls)
+
+
+def test_redo_note_reaches_only_its_question(env):
+    run(CHAIN_FULL)
+    _, fake = run([step("q2b"), step("q3b")], redo="R3", note=NOTE)
+    assert NOTE in prompts_of(fake)[0] and NOTE not in prompts_of(fake)[1]
+    _, fake = run([step("q4b")], redo="R2")
+    assert NOTE not in prompts_of(fake)[0]  # gop y da het hieu luc khi cau do xong
+
+
+def test_redo_note_is_masked_and_limited(env, monkeypatch):
+    run(CHAIN_FULL)
+    monkeypatch.setattr(loop.config, "CONTEXT_CORRECTIONS_MAX_CHARS", 20)
+    long_note = "x" * 500
+    _, fake = run([step("q4b")], redo="R2", note=long_note)
+    assert long_note not in prompts_of(fake)[0] and "x" * 15 in prompts_of(fake)[0]
+
+
+def test_redo_answer_n_changes_nothing(env):
+    run(CHAIN_FULL)
+    before = snapshot(env)
+    ans = Answers(rules=[("Chạy lại", "n")])
+    code, fake = run([], redo="R3", note=NOTE, yes=False, ask_user=ans)
+    assert code == loop.STOPPED and fake.all_calls == [] and ans.count("Chạy lại") == 1
+    assert snapshot(env) == before
+
+
+def test_redo_lists_what_will_rerun(env, capsys):
+    run(CHAIN_FULL)
+    capsys.readouterr()
+    run([], redo="R3", yes=False, ask_user=Answers(rules=[("Chạy lại", "n")]))
+    out = capsys.readouterr().out
+    assert "R3 (Q2): Câu hai?" in out and "R4 (Q3): Câu ba?" in out and "R1 (Q1)" not in out and "R2 (Q4)" not in out
+
+
+@pytest.mark.parametrize("stop", [LLMChainExhausted("hết"), KeyboardInterrupt()])
+def test_redo_interrupted_then_plain_run_finishes(env, monkeypatch, stop):
+    run(CHAIN_FULL)
+    code, _ = run([step("q2b"), stop], redo="R3", note=NOTE) if isinstance(stop, LLMChainExhausted) \
+        else _interrupt_at_q3(monkeypatch)
+    assert code in (loop.EXHAUSTED, loop.STOPPED) and env.get_state().phase == Phase.LOOP
+    assert env.results_by_question() == {"Q1": "R1", "Q4": "R2", "Q2": "R5"}
+    assert env.get_insights() is None
+    assert run([step("q3b")])[0] == loop.DONE and env.get_state().phase == Phase.DONE
+    assert env.results_by_question() == {"Q1": "R1", "Q4": "R2", "Q2": "R5", "Q3": "R6"}
+
+
+def _interrupt_at_q3(monkeypatch):
+    real = loop._solve_attempts
+
+    def stop_at_q3(ctx, q, *a):
+        if q.key == "Q3":
+            raise KeyboardInterrupt
+        return real(ctx, q, *a)
+
+    with monkeypatch.context() as m:
+        m.setattr(loop, "_solve_attempts", stop_at_q3)
+        return run([step("q2b")], redo="R3", note=NOTE)
+
+
+def test_redo_interrupted_keeps_note_for_resume(env):
+    run(CHAIN_FULL)
+    code, _ = run([LLMChainExhausted("hết")], redo="R3", note=NOTE)
+    assert code == loop.EXHAUSTED and env.get_state().redo_notes == {"Q2": [NOTE], "Q3": []}
+    _, fake = run([step("q2b"), step("q3b")])
+    assert NOTE in prompts_of(fake)[0] and [c["use_cache"] for c in fake.calls] == [False, False]
+    assert env.get_state().redo_notes == {}
+
+
+def test_redo_new_assumption_goes_through_checkpoint(env):
+    run(CHAIN_FULL)
+    extra = {"kind": "assumption", "text": "Giả định mới khi chạy lại", "required": True}
+    ans = Answers(rules=[(LIST, "n")])
+    code, _ = run([step("q4b", new_assumptions=[extra])], redo="R2", yes=False, ask_user=ans)
+    assert code == loop.STOPPED and ans.count(LIST) == 1
+    assert next(d for d in env.decisions() if d.text == extra["text"]).status.value == "pending"
+
+
+def test_redo_drops_accept_flag_decision_of_old_results(env):
+    script = [RESTATEMENT, CHAIN_PLAN, step("q1"), step("q4"), step("q2", passed=False), step("q3")]
+    run(script)
+    assert statuses(env)["chấp nhận R3 dù có cờ có dòng"] == "confirmed"
+    run([step("q2b"), step("q3b")], redo="R3")
+    assert not any("chấp nhận R3" in d.text for d in env.active_decisions())
+
+
+@pytest.mark.parametrize("rid, status", [("R99", "Không có kết quả R99"), ("R3", "status=superseded"),
+                                         ("R4", "status=stale")])
+def test_redo_bad_id_stops_with_code_3(env, capsys, rid, status):
+    run(CHAIN_FULL)
+    run([LLMChainExhausted("hết")], redo="R3")
+    before = snapshot(env)
+    capsys.readouterr()
+    code, fake = run([], redo=rid)
+    assert code == loop.STOPPED and fake.all_calls == [] and status in capsys.readouterr().out
+    assert snapshot(env) == before
+
+
+def test_redo_refuses_before_loop_phase(env, capsys):
+    run([RESTATEMENT, LLMChainExhausted("hết")])
+    code, _ = run([], redo="R1")
+    assert code == loop.STOPPED and "--redo chỉ dùng từ pha loop" in capsys.readouterr().out
+
+
+def test_redo_refuses_result_outside_current_plan(env, capsys):
+    run(CHAIN_FULL)
+    state = env.get_state()
+    plan = {**state.plan, "sub_questions": [q for q in state.plan["sub_questions"] if q["key"] != "Q3"]}
+    env.update_state(plan=plan)
+    code, _ = run([], redo="R3")
+    assert code == loop.STOPPED and "R4 không thuộc kế hoạch" in capsys.readouterr().out
+    assert env.get_result("R3").status.value == "valid"
+
+
+def test_redo_stops_before_change_when_dictionary_changed(env, monkeypatch):
+    run(CHAIN_FULL)
+    before = snapshot(env)
+    profile = env.get_data_profile()
+    profile[quality.REPORT_KEY]["dictionary"]["etag"] = "cu"
+    env.set_data_profile(profile)
+    code, fake = run([], redo="R3")
+    assert code == loop.STOPPED and fake.all_calls == [] and snapshot(env) == before
+
+
+def test_redo_stops_before_change_when_report_locked(env, monkeypatch, capsys):
+    run(CHAIN_FULL)
+    before = snapshot(env)
+    n_log = len(env.read_log())
+    monkeypatch.setattr(Ledger, "locked_report_files", lambda self: ["bao_cao.docx"])
+    code, _ = run([], redo="R3")
+    assert code == loop.STOPPED and snapshot(env) == before and len(env.read_log()) == n_log
+    assert "bao_cao.docx" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("argv", [["--note", "x"], ["--redo", "R1", "--restart"], ["--redo", "R1", "--resynthesize"],
+                                  ["--redo", "R1", "--build-report"], ["--redo", "R1", "--sensitive", "A.b"]])
+def test_cli_rejects_bad_redo_options(env, argv):
+    with pytest.raises(SystemExit):
+        app.main([TASK, *argv])
+
+
+def test_cli_redo_with_fake(env):
+    assert app.main([TASK, "--fake", "--yes"]) == loop.DONE
+    assert app.main([TASK, "--fake", "--yes", "--redo", "R1", "--note", NOTE]) == loop.DONE
+    led = Ledger(env.root.parent / "_fake" / TASK)
+    assert result_statuses(led) == {"R1": "superseded", "R2": "valid"} and led.get_state().phase == Phase.DONE
+
+
+def test_s_at_flag_reruns_that_question_with_note(env):
+    ans = Answers(rules=[(FLAG_ASK, "s"), (NOTE_ASK, NOTE)])
+    code, fake = run([RESTATEMENT, SIMPLE_PLAN, step("q1", passed=False), step("q1b"), STEP2], yes=False, ask_user=ans)
+    assert code == loop.DONE and result_statuses(env) == {"R1": "superseded", "R2": "valid", "R3": "valid"}
+    assert env.results_by_question() == {"Q1": "R2", "Q2": "R3"}
+    steps = [p for p in prompts_of(fake) if "# Current question" in p]
+    assert NOTE not in steps[0] and NOTE in steps[1] and NOTE not in steps[2]
+    assert not any("chấp nhận R1" in d.text for d in env.active_decisions())
+    assert not (env.root / "work" / "q1.csv").exists()
+    assert ans.count(FLAG_ASK) == 1 and env.get_state().redo_notes == {}
+
+
+def test_s_at_flag_marks_dependents_stale(env):
+    run(CHAIN_FULL)
+    ans = Answers(rules=[(FLAG_ASK, "s"), (NOTE_ASK, NOTE)])
+    code, _ = run([step("q2b", passed=False), step("q2c"), step("q3b")], redo="R3", yes=False, ask_user=ans)
+    assert code == loop.DONE and env.results_by_question() == {"Q1": "R1", "Q4": "R2", "Q2": "R6", "Q3": "R7"}
+    assert env.get_result("R5").status.value == "superseded" and env.get_result("R4").status.value == "stale"
+
+
+def test_s_at_flag_limited_like_plan_then_only_y_or_n(env):
+    asked = []
+
+    def ask(question):
+        asked.append(question)
+        if FLAG_ASK in question:
+            return "s" if "s = gõ" in question else "y"
+        return NOTE if NOTE_ASK in question else "y"
+
+    flagged = [step(f"q{i}", passed=False) for i in range(1, 5)]
+    code, _ = run([RESTATEMENT, SIMPLE_PLAN, *flagged, STEP2], yes=False, ask_user=ask)
+    limit = loop.config.ANALYSIS_PLAN_MAX_RETRIES
+    gates = [q for q in asked if FLAG_ASK in q]
+    assert code == loop.DONE and len(gates) == limit + 1 and sum("s = gõ" in q for q in gates) == limit
+    assert env.results_by_question()["Q1"] == "R4"
+
+
+def test_flag_stop_reasks_on_bad_input_and_empty_note(env):
+    answers = iter(["x", "s", "", "y"])
+    asked = []
+
+    def ask(question):
+        asked.append(question)
+        return next(answers) if FLAG_ASK in question or NOTE_ASK in question else "y"
+
+    code, _ = run([RESTATEMENT, SIMPLE_PLAN, step("q1", passed=False), STEP2], yes=False, ask_user=ask)
+    assert code == loop.DONE and len([q for q in asked if FLAG_ASK in q]) == 3
+    assert env.results_by_question() == {"Q1": "R1", "Q2": "R2"}
+
+
+def test_interrupted_while_rerunning_after_s_resumes_with_note(env):
+    ans = Answers(rules=[(FLAG_ASK, "s"), (NOTE_ASK, NOTE)])
+    code, _ = run([RESTATEMENT, SIMPLE_PLAN, step("q1", passed=False), LLMChainExhausted("hết")], yes=False, ask_user=ans)
+    assert code == loop.EXHAUSTED and env.results_by_question() == {}
+    code, fake = run([step("q1b"), STEP2])
+    assert code == loop.DONE and NOTE in prompts_of(fake)[0]
