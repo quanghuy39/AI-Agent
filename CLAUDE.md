@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 ## Dự án
-AI agent phân tích dữ liệu: một agent, nhiều skill (hiện có `skills/analysis`). Chạy local; dữ liệu đề bài nằm trên
+AI agent phân tích dữ liệu: một agent, nhiều skill (hiện có `skills/analysis`, `skills/report`). Chạy local; dữ liệu đề bài nằm trên
 Cloudflare R2 (bucket đọc qua `storage/r2.py`, có cache ở `cache/`). Chủ dự án mới học lập trình, làm theo kiểu
 vibe code với Claude Code trên Windows 11, VSCode, PowerShell; Python 3.12 trong `.venv`.
 
@@ -20,7 +20,7 @@ Trạng thái từng ngày: xem `PROGRESS.md`.
 - `validators/` – `rows.py`, `join.py`, `sums.py`, `ranges.py`, `result.py` (row_count/join/sum/range check).
 - `ledger/` – `schema.py`, `ledger.py`: hồ sơ bài ở `output/<bài>/` (results, decisions, findings, open_items,
   data_profile, problem, state, insights, run_log.jsonl; file của lần làm trước ở `work/_superseded/<thời điểm>/`,
-  `insights.json` bị bỏ ở `_superseded/`). Decision có
+  `insights.json` và `report/` bị bỏ ở `_superseded/`; file trong `report/` bị khóa thì `ReportLocked`). Decision có
   status pending, confirmed, superseded; code dùng `active_decisions()`, `decisions()` trả cả superseded để đối chiếu.
 - `runner/run_code.py` – chạy code AI: thư mục tạm, input chỉ đọc, bỏ biến bí mật, quét ast, timeout, meta.
 - `main.py` – luồng duy nhất: máy trạng thái understand → explore → plan → loop → synthesize → done, lưu `state.json`
@@ -34,14 +34,14 @@ Trạng thái từng ngày: xem `PROGRESS.md`.
 - `skills/analysis/` – `understand.md`, `plan.md`, `step.md`, `contract.md` (prompt), `schemas.py` (ProblemRestatement,
   AnalysisPlan, AnalysisStep, AgentMeta), `__init__.py` (load_prompt, render_prompt).
 - `report/` – `placeholders.py` (điền số, định dạng, `validate_synthesis`, nhãn), `synthesize.py` (pha tổng hợp),
-  `tables.py` (`result_tables`: cách duy nhất lấy file bảng của kết quả), `charts.py` (biểu đồ, `validate_visuals`,
-  biểu đồ dự phòng `with_auto_charts`),
+  `tables.py` (`result_tables`: cách duy nhất lấy file bảng của kết quả; `ordered`, `grouped`: thứ tự dòng dùng chung cho
+  bảng và biểu đồ), `charts.py` (biểu đồ, `validate_visuals`, biểu đồ dự phòng `with_auto_charts`, tiêu đề `chart_title`),
   `docx_builder.py` (Word), `slides_outline.py`, `build.py` (dựng cả bộ vào `output/<bài>/report/`).
 - `skills/report/` – `synthesize.md` (prompt), `schemas.py` (SynthesisOutput, Insight, nội dung `insights.json`),
   `__init__.py` (load_prompt, render_prompt).
-- `slides/` – mới có `__init__.py` (chưa làm).
+- `slides/` – mới có `__init__.py` (chưa làm); dàn ý slide do `report/slides_outline.py` dựng, không gọi AI.
 - `templates/data_dictionary_template.md` – mẫu data dictionary.
-- `tests/` – pytest `test_*.py`; script chạy tay (`grade.py`, `grade_bai0b.py`, `try_ask_model.py`, `list_models.py`,
+- `tests/` – pytest `test_*.py`; script chạy tay (`grade.py`, `grade_bai*.py`, `try_ask_model.py`, `list_models.py`,
   `probe_*.py`, `make_*.py`); `tests/llm_eval/` bộ kiểm định model (cases, scoring, run_eval, summary, thresholds.yaml).
 - `Dockerfile` – python:3.12-slim, chạy `main.py`.
 - Không lên git: `.env`, `.venv/`, `cache/`, `output/`, `test_data/`, `tests/llm_eval/results/`.
@@ -49,6 +49,7 @@ Trạng thái từng ngày: xem `PROGRESS.md`.
 ## Lệnh thường dùng (PowerShell, trong `.venv`)
 ```powershell
 python -m pytest -q                                   # toàn bộ test (không gọi API thật)
+python -m pytest -q tests/test_docx_builder.py        # một file test
 python config.py                                      # chỉ in OK/THIẾU cho từng biến .env
 python -m storage.r2 list input/                      # liệt kê; answers/ cần --grader
 python -m storage.r2 head input/bai0a/CATEGORY.csv
@@ -68,16 +69,17 @@ python tests/llm_eval/run_eval.py --list              # số case theo role
 python tests/llm_eval/run_eval.py --model <key> --role analysis [--limit N] [--resume] --yes   # GỌI API THẬT
 ```
 `main.py` và `analysis.loop` trả mã: 0 xong, 1 lỗi gọi AI hoặc lỗi R2, 2 hết hạn mức chuỗi model (chạy lại để tiếp tục),
-3 dừng (StopLoop: người dùng từ chối, prompt quá dài sau mọi bậc cắt, `--sensitive` khác state, ...; hoặc bản tóm tắt
-lộ giá trị che).
+3 dừng (StopLoop: người dùng từ chối, prompt quá dài sau mọi bậc cắt, `--sensitive` khác state, ...; bản tóm tắt
+lộ giá trị che; hoặc file trong `report/` bị khóa).
 Chạy lại: tiếp từ pha trong `state.json`; câu đã giải lấy từ `Ledger.results_by_question()` (chỉ kết quả valid).
 `--sensitive` chốt vào state ở lần chạy đầu, muốn đổi thì `--restart --sensitive ...`. `--restart` chuyển kết quả valid
 và mọi decision thành superseded (giữ trong file, không dùng lại, hỏi lại từ đầu), toàn bộ file `work/` sang
-`work/_superseded/<thời điểm>/`, `insights.json` sang `_superseded/`, đóng open_item của bước xác nhận; run_log giữ nguyên.
+`work/_superseded/<thời điểm>/`, `insights.json` và `report/` sang `_superseded/`, đóng open_item của bước xác nhận; run_log giữ nguyên.
 Điểm dừng danh sách câu hỏi nhỏ: y chấp nhận, n dừng, s gõ góp ý (vào `user_corrections`, kèm câu hỏi của kế hoạch cũ gửi AI
 lập lại, tối đa `ANALYSIS_PLAN_MAX_RETRIES` lần; decision kế hoạch mới không còn thì superseded).
-`--resynthesize`: `insights.json` sang `_superseded/`, decision chấp nhận kết luận thành superseded rồi hỏi lại, kết quả và
+`--resynthesize`: `insights.json` và `report/` sang `_superseded/`, decision chấp nhận kết luận thành superseded rồi hỏi lại, kết quả và
 decision khác giữ nguyên; pha sớm hơn thì từ chối, mã 3; không dùng cùng `--restart`, `--sensitive`.
+`--build-report` không dùng cùng `--restart`, `--resynthesize`, `--sensitive`.
 Báo cáo dựng sau khi chấp nhận kết luận, ở `output/<bài>/report/`: `bao_cao_<bài>.docx`, `ho_so_<bài>.md`, `slides_outline.json`,
 `charts/<insight>.png`; lỗi dựng báo cáo không đổi state done, sửa rồi `--build-report`. `REPORT_AUTHOR` trong `.env` là tùy chọn.
 `--restart`, `--resynthesize`, `--build-report`: file trong `report/` đang bị khóa (mở trong Word) thì dừng trước mọi thao tác ghi,
