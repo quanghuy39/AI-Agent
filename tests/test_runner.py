@@ -101,6 +101,30 @@ def test_same_step_name_gets_suffix_and_unchanged_files_not_reported(env):
     assert second.files_created == []  # file cu khong doi thi khong tinh
 
 
+REWRITE = "import os\nopen(os.path.join(os.environ['AGENT_OUTPUT_DIR'], 'a.csv'), 'w').write('x\\n1\\n')\n"
+
+
+def test_rewriting_identical_file_is_written_but_not_created(env):
+    first = rc.run_code(REWRITE, TASK, "R1")
+    second = rc.run_code(REWRITE, TASK, "R1")
+    path = str(env / "output" / TASK / "work" / "a.csv")
+    assert first.files_written == first.files_created == [path]
+    assert second.files_created == [] and second.files_written == [path]
+    assert Ledger(env / "output" / TASK).read_log()[-1].extra["files_written"] == [path]
+
+
+def test_file_only_read_or_left_alone_is_not_written(env):
+    rc.run_code(REWRITE, TASK, "R1")
+    read = "import os\nprint(open(os.path.join(os.environ['AGENT_OUTPUT_DIR'], 'a.csv')).read())\n"
+    assert rc.run_code(read, TASK, "R1").files_written == []
+    assert rc.run_code("print(1)", TASK, "R1").files_written == []
+
+
+def test_failed_run_reports_no_written_file(env):
+    rc.run_code(REWRITE, TASK, "R1")
+    assert rc.run_code(REWRITE + "raise SystemExit(3)\n", TASK, "R1").files_written == []
+
+
 def test_overwriting_input_does_not_touch_cache(env):
     code = """
 import os

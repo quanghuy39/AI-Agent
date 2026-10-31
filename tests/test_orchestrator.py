@@ -19,6 +19,7 @@ from ledger import Ledger, Phase
 from llm import LLMChainExhausted
 from profiling import quality
 from profiling.data_summary import SensitiveLeakError
+from report.tables import result_tables
 from runner import run_code as runner
 from skills.report.schemas import SynthesisOutput
 from storage import r2
@@ -247,7 +248,7 @@ def on_plan(*plan_answers):
     def ask(question):
         if "danh sách câu hỏi nhỏ" in question:
             return queue.pop(0)
-        return FEEDBACK if question == loop.CORRECTION_PROMPT else "y"
+        return FEEDBACK if question == loop.PLAN_CORRECTION_PROMPT else "y"
     return ask
 
 
@@ -297,30 +298,54 @@ def test_plan_feedback_interrupted_rerun_makes_new_plan(env):
     assert status["Tổng giá = cộng cột price"] == "superseded"
 
 
-@pytest.mark.parametrize("answer", ["n", "khác", ""])
-def test_plan_answer_other_than_y_s_stops_as_before(env, answer):
-    code, fake = run([RESTATEMENT, PLAN], yes=False, ask_user=on_plan(answer))
+def test_plan_only_n_stops(env):
+    code, fake = run([RESTATEMENT, PLAN], yes=False, ask_user=on_plan("khác", "", "n"))
     assert code == loop.STOPPED and len(fake.calls) == 2 and env.get_state().plan is not None
     assert [o.text for o in env.open_items()] == [loop.PLAN_OPEN_ITEM]
 
 
-def test_plan_empty_feedback_stops_without_calling_ai(env):
-    ask = on_plan("s")
+def test_plan_invalid_answer_asks_again_then_y(env):
+    code, _ = run(FULL, yes=False, ask_user=on_plan("khác", "", "y"))
+    assert code == loop.DONE
 
-    def empty(question):
-        return "  " if question == loop.CORRECTION_PROMPT else ask(question)
 
-    code, fake = run([RESTATEMENT, PLAN], yes=False, ask_user=empty)
+def test_plan_empty_feedback_asks_again_without_calling_ai(env):
+    ask = on_plan("s", "n")
+    code, fake = run([RESTATEMENT, PLAN], yes=False,
+                     ask_user=lambda q: "  " if q == loop.PLAN_CORRECTION_PROMPT else ask(q))
     assert code == loop.STOPPED and len(fake.calls) == 2 and env.get_state().plan is not None
     assert env.get_problem()["user_corrections"] == []
 
 
-def test_plan_feedback_gives_up_after_max_retries(env):
+def test_plan_feedback_after_max_retries_offers_only_y_n(env):
     tries = loop.config.ANALYSIS_PLAN_MAX_RETRIES
-    code, fake = run([RESTATEMENT] + [PLAN] * (tries + 1), yes=False, ask_user=on_plan(*["s"] * (tries + 1)))
+    asked = []
+    ask = on_plan(*["s"] * tries, "s", "n")  # s o lan cuoi khong con hop le: hoi lai
+    code, fake = run([RESTATEMENT] + [PLAN] * (tries + 1), yes=False, ask_user=lambda q: asked.append(q) or ask(q))
     assert code == loop.STOPPED and schemas(fake).count("AnalysisPlan") == tries + 1
     assert len(env.get_problem()["user_corrections"]) == tries
     assert [o.text for o in env.open_items()] == [loop.PLAN_OPEN_ITEM]
+    assert "s = gõ góp ý" not in asked[-1]
+
+
+@pytest.mark.parametrize("stop", ["Diễn giải", "kết luận"])
+def test_yes_no_stop_asks_again_on_invalid_answer(env, stop):
+    seen = []
+
+    def ask(question):
+        if stop not in question:
+            return "y"
+        seen.append(question)
+        return {1: "", 2: "chấp nhận"}.get(len(seen), "y")
+
+    code, _ = run(FULL, yes=False, ask_user=ask)
+    assert code == loop.DONE and len(seen) == 3
+    assert env.get_insights() is not None  # go nham khong lam mat ban tong hop
+
+
+def test_understand_blank_correction_still_stops(env):
+    code, _ = run([RESTATEMENT], yes=False, ask_user=answers("n", ""))
+    assert code == loop.STOPPED
 
 
 def test_plan_question_offers_s_and_yes_skips_it(env, capsys):
@@ -335,7 +360,7 @@ def test_plan_feedback_stays_within_corrections_cap(env):
     long_text = "x" * (loop.config.CONTEXT_CORRECTIONS_MAX_CHARS * 2)
     ask = on_plan("s", "y")
     code, fake = run([RESTATEMENT, PLAN, PLAN, STEP1, STEP2], yes=False,
-                     ask_user=lambda q: long_text if q == loop.CORRECTION_PROMPT else ask(q))
+                     ask_user=lambda q: long_text if q == loop.PLAN_CORRECTION_PROMPT else ask(q))
     assert code == loop.DONE and long_text not in prompts(fake)[2]
     assert "x" * (loop.config.CONTEXT_CORRECTIONS_MAX_CHARS - 40) in prompts(fake)[2]
     assert env.get_problem()["user_corrections"][0].endswith(long_text)  # ho so giu du
@@ -483,7 +508,9 @@ def test_table_from_failed_attempt_reaches_synthesis_prompt(env):
     half = step("q1")
     half["can_be_wrong_if"] = ["ý 1", "ý 2"]  # thieu check custom -> lan 1 chua dat, file da ve work/
     code, fake = run([RESTATEMENT, PLAN, half, STEP1, STEP2])
-    assert code == loop.DONE and "q1.csv" not in (env.get_result("R1").output_path or "")
+    assert code == loop.DONE and env.get_result("R1").output_path == "work/q1.csv"
+    tables = result_tables(env, "R1")
+    assert [(t["name"], t["columns"], t["rows"]) for t in tables] == [("q1.csv", ["product_id", "price"], 6)]
     prompt = [c for c in fake.all_calls if c["role"] == "report"][0]["messages"][0]["content"]
     assert "tables: q1.csv [product_id, price]" in prompt and "P0001" not in prompt.split("# Results")[1]
 
@@ -702,7 +729,7 @@ def test_restart_also_moves_file_left_by_failed_attempt(env):
     half = step("q1")
     half["can_be_wrong_if"] = ["ý 1", "ý 2"]  # thieu check custom -> lan 1 chua dat, file da ve work/
     run([RESTATEMENT, PLAN, half, STEP1, STEP2])
-    assert "q1.csv" not in (env.get_result("R1").output_path or "")
+    assert env.get_result("R1").output_path == "work/q1.csv"
     run([LLMChainExhausted("hết")], restart=True)
     assert all(f.startswith("_superseded/") for f in work_files(env))
 

@@ -55,7 +55,8 @@ class RunResult(BaseModel):
     stderr: str = ""
     timed_out: bool = False
     blocked_reason: str | None = None
-    files_created: list[str] = Field(default_factory=list)  # duong dan that trong output/<task>/work/
+    files_created: list[str] = Field(default_factory=list)  # file doi noi dung, duong dan that trong output/<task>/work/
+    files_written: list[str] = Field(default_factory=list)  # moi file lan chay nay ghi, ke ca ghi lai y het
     code_path: str | None = None
     input_hashes: dict[str, str] = Field(default_factory=dict)  # ten file -> sha256
     duration_sec: float = 0.0
@@ -197,6 +198,11 @@ def _snapshot(directory):
     return {p.relative_to(directory).as_posix(): _sha256(p) for p in directory.rglob("*") if p.is_file()}
 
 
+def _mtimes(directory):
+    """{duong dan tuong doi: mtime}. copytree giu mtime, nen file doi mtime nghia la code da ghi lai no."""
+    return {p.relative_to(directory).as_posix(): p.stat().st_mtime_ns for p in directory.rglob("*") if p.is_file()}
+
+
 def _truncate(text, limit=None):
     limit = config.RUNNER_MAX_OUTPUT_CHARS if limit is None else limit
     if len(text) <= limit:
@@ -316,7 +322,7 @@ def run_code(code, task, step_name, timeout=None):
         # file trung gian cua cac buoc truoc; khong dua file cua lan lam truoc (--restart) cho code AI
         shutil.copytree(real_work, work_dir, ignore=shutil.ignore_patterns(SUPERSEDED_DIR))
 
-        before = _snapshot(work_dir)
+        before, before_times = _snapshot(work_dir), _mtimes(work_dir)
         execute(code, input_dir, work_dir, run_dir, meta_path, timeout, result)
         if result.ok:  # chi chep ve khi chay tron; loi/qua gio thi file that giu nguyen, files_created rong
             changed = sorted(k for k, v in _snapshot(work_dir).items() if before.get(k) != v)
@@ -325,6 +331,9 @@ def run_code(code, task, step_name, timeout=None):
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(work_dir / rel, dst)
             result.files_created = [str(real_work / rel) for rel in changed]
+            # lan thu truoc da ghi y het thi file khong "doi", nhung van la file cua lan chay nay
+            written = sorted(k for k, v in _mtimes(work_dir).items() if before_times.get(k) != v)
+            result.files_written = [str(real_work / rel) for rel in written]
     finally:
         _rmtree(tmp)
     _log(task, step_name, code_path, result, "timeout" if result.timed_out else "ok" if result.ok else "error")
@@ -340,7 +349,7 @@ def _log(task, step_name, code_path, result, status):
     Ledger(OUTPUT_DIR / task).log_event(
         "runner", step_name, inputs={"input_hashes": result.input_hashes}, code_file=rel, status=status,
         extra={"returncode": result.returncode, "duration_sec": result.duration_sec,
-               "files_created": result.files_created, "blocked_reason": result.blocked_reason,
+               "files_created": result.files_created, "files_written": result.files_written, "blocked_reason": result.blocked_reason,
                "warnings": result.warnings, "has_meta": result.meta is not None,  # khong ghi noi dung meta
                "meta_error": result.meta_error})
 

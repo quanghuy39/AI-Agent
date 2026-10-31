@@ -41,6 +41,7 @@ CHAIN_OPEN_ITEM = "hết hạn mức chuỗi, chạy tiếp sau (chuỗi model a
 PLAN_OPEN_ITEM = "Kế hoạch phân tích chưa được chấp nhận; chạy lại để xem lại, hoặc --restart để làm lại từ đầu."
 PENDING_OPEN_ITEM = "Còn decision chờ xác nhận; chạy lại để trả lời tiếp."
 YES = ("y", "yes", "c", "co", "có")
+NO = ("n", "no", "k", "khong", "không")
 NO_HANDLING = "(chưa có đề xuất của AI) giữ nguyên, không xử lý riêng"  # cach xu ly mac dinh cua co muc flag
 # Diem dung xu ly bat thuong khi chi co co info: hoi bang QUESTION, luu TEXT (dua cho AI nen phai tu du nghia)
 KEEP_DATA_KEY = "keep_data|info_flags"
@@ -49,7 +50,9 @@ KEEP_DATA_TEXT = "Giữ nguyên dữ liệu, không xử lý riêng các lưu ý
 ACCEPT_FLAGS_KEY = "accept_flags|"  # decision "chap nhan R.. du co co", sinh sau khi giai, khong thuoc diem dung nay
 EDIT_PROMPT = "  Nội dung mới: "
 CORRECTION_PROMPT = "Gõ chỉnh sửa (để trống để dừng): "
-FOLLOW_UP_PROMPTS = (EDIT_PROMPT, CORRECTION_PROMPT)  # go tiep sau mot cau tra loi, khong phai diem dung moi
+PLAN_CORRECTION_PROMPT = "Gõ góp ý (để trống để quay lại câu hỏi): "
+# go tiep sau mot cau tra loi, khong phai diem dung moi
+FOLLOW_UP_PROMPTS = (EDIT_PROMPT, CORRECTION_PROMPT, PLAN_CORRECTION_PROMPT)
 PLAN_QUESTION = "Chấp nhận danh sách câu hỏi nhỏ của kế hoạch?"
 PLAN_CORRECTION_PREFIX = "Góp ý kế hoạch: "  # phan biet voi chinh sua cach hieu de trong user_corrections
 
@@ -165,10 +168,14 @@ def load_context(task, sensitive=None):
 # ---------- hoi nguoi dung ----------
 
 def confirm(question, yes=False, ask_user=input):
+    """Hoi y/n; nhap khac thi hoi lai, chi n moi la khong dong y."""
     if yes:
         print(f"{question} [y/n] y (--yes)")
         return True
-    return ask_user(f"{question} [y/n] ").strip().lower() in YES
+    while True:
+        answer = ask_user(f"{question} [y/n] ").strip().lower()
+        if answer in YES or answer in NO:
+            return answer in YES
 
 
 def _render(ctx, prompt_name, **variables):
@@ -534,30 +541,41 @@ def _save_plan_correction(ctx, text):
     ctx.ledger.update_state(plan=None, replaced_plan=ctx.ledger.get_state().plan)
 
 
-def _plan_answer(yes, ask_user):
-    """Tra ve "y", "n" hoac noi dung gop y. Tra loi khac y, s tinh la n; gop y de trong cung la n."""
+def _plan_answer(yes, ask_user, can_correct):
+    """Tra ve "y", "n" hoac noi dung gop y. Nhap khong hop le hoac gop y rong thi hoi lai, chi n moi dung.
+    can_correct=False: da het luot gop y, chi con y/n."""
     if yes:
         print(f"{PLAN_QUESTION} [y/s/n] y (--yes)")
         return "y"
-    answer = ask_user(f"{PLAN_QUESTION} [y = chấp nhận, s = gõ góp ý, n = dừng] ").strip().lower()
-    if answer in YES:
-        return "y"
-    return (ask_user(CORRECTION_PROMPT).strip() or "n") if answer == "s" else "n"
+    options = "y = chấp nhận, s = gõ góp ý, n = dừng" if can_correct else "y = chấp nhận, n = dừng"
+    while True:
+        answer = ask_user(f"{PLAN_QUESTION} [{options}] ").strip().lower()
+        if answer in YES:
+            return "y"
+        if answer in NO:
+            return "n"
+        if answer == "s" and can_correct:
+            text = ask_user(PLAN_CORRECTION_PROMPT).strip()
+            if text:
+                return text
 
 
 def accept_plan(ctx, plan, yes, ask_user):
     """Hoi cac decision con pending, roi danh sach cau hoi nho. Chay lai chi hoi phan chua xong. Tra loi s: gop y gui
-    lai AI lap ke hoach moi, toi da ANALYSIS_PLAN_MAX_RETRIES lan."""
+    lai AI lap ke hoach moi, toi da ANALYSIS_PLAN_MAX_RETRIES lan; het luot thi chi con y/n."""
     for attempt in range(config.ANALYSIS_PLAN_MAX_RETRIES + 1):
         register_plan_decisions(ctx, plan)
         print_plan(plan)
         review_decisions(ctx, yes, ask_user, PLAN_OPEN_ITEM, show_info=True)
-        answer = _plan_answer(yes, ask_user)
+        can_correct = attempt < config.ANALYSIS_PLAN_MAX_RETRIES
+        if not can_correct:
+            print("Đã hết lượt góp ý cho kế hoạch.")
+        answer = _plan_answer(yes, ask_user, can_correct)
         if answer == "y":
             require_confirmed(ctx)
             ctx.ledger.log_event("analysis", "confirm_plan", extra={"n_decisions": len(ctx.decisions)})
             return
-        if answer == "n" or attempt == config.ANALYSIS_PLAN_MAX_RETRIES:
+        if answer == "n":
             break
         _save_plan_correction(ctx, answer)
         ctx.ledger.log_event("analysis", "confirm_plan", status="correction", extra={"attempt": attempt + 1})
@@ -730,7 +748,7 @@ def _record(ctx, q, step, run, grade, results_by_key, yes, ask_user):
     entry = ctx.ledger.add_result(
         q.question, step.method, grade.result_summary, grade.checks,
         depends_on=[results_by_key[d] for d in q.depends_on],
-        output_path="; ".join(_rel(ctx, p) for p in run.files_created) or None,
+        output_path="; ".join(_rel(ctx, p) for p in run.files_written) or None,
         code_file=_rel(ctx, run.code_path), question_key=q.key)
     ctx.ledger.close_open_items_with_text(CHAIN_OPEN_ITEM)  # da chay tiep duoc: muc nay het y nghia
     if ctx.model:

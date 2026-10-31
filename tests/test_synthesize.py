@@ -26,6 +26,7 @@ from report.placeholders import (
     validate_synthesis,
 )
 from report.synthesize import _results_text, build_variables, print_insights, synthesize
+from report.tables import result_tables
 from skills.report import load_prompt, render_prompt
 from skills.report.schemas import SynthesisOutput
 
@@ -463,6 +464,27 @@ def test_file_in_both_output_path_and_log_listed_once(led):
     led.log_event("runner", "R3_Q3", extra={"files_created": [str(led.root / "work" / "by_group.csv")]})
     variables, _ = build_variables(led)
     assert variables["results"].count("by_group.csv") == 1
+
+
+def test_result_tables_gives_path_columns_rows(led):
+    tables = result_tables(table_ledger(led), "R3")
+    assert [t["name"] for t in tables] == ["by_group.csv", "empty.csv", "wide.parquet"]
+    assert tables[0]["columns"] == ["group", "total"] and tables[0]["rows"] == 1 and tables[0]["path"].is_file()
+    assert tables[1]["columns"] is None and tables[1]["rows"] is None
+    assert tables[2]["columns"] == ["a", "b"] and tables[2]["rows"] == 1
+
+
+def test_result_tables_counts_rows_with_quoted_newline(led):
+    work = led.root / "work"
+    work.mkdir()
+    (work / "q.csv").write_text('a,b\n"dòng\nhai",1\nx,2\n', encoding="utf-8")
+    led.add_result("B", "m", {}, PASS, output_path="work/q.csv")
+    assert result_tables(led, "R3")[0]["rows"] == 2
+
+
+def test_result_tables_unknown_result(led):
+    with pytest.raises(KeyError):
+        result_tables(led, "R9")
 
 
 def test_columns_are_capped(led, monkeypatch):

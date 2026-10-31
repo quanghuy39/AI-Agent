@@ -380,7 +380,7 @@ def test_plan_feedback_asks_flag_again_when_proposal_changes(env):
     def plan_with(text):
         return {**SIMPLE_PLAN, "assumptions": [{"kind": "anomaly_handling", "text": text, "flag_key": DUP_ORDERS}]}
 
-    ans = Answers(rules=[("Gõ chỉnh sửa", "Đổi cách xử lý")])
+    ans = Answers(rules=[("Gõ góp ý", "Đổi cách xử lý")])
     replies = iter(["s", "y"])
     ask = lambda q: next(replies) if "danh sách câu hỏi nhỏ" in q else ans(q)  # noqa: E731
     code, _ = run([RESTATEMENT, plan_with("Lấy dòng đầu"), plan_with("Lấy dòng cuối"), STEP1, STEP2], task=FLAGGED,

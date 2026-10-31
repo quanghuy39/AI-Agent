@@ -7,10 +7,6 @@ Moi chuoi dua cho AI deu qua mask (che gia tri cot nhay cam). Sai het so lan thu
 """
 
 import json
-from pathlib import Path
-
-import pandas as pd
-import pyarrow.parquet as pq
 
 import config
 import context_builder
@@ -19,9 +15,9 @@ from analysis import loop
 from ledger import DecisionStatus, ResultStatus
 from profiling import flags as fl
 from report.placeholders import assign_label, fill, requirements_of, validate_synthesis
+from report.tables import result_tables
 from skills.report import render_prompt
 from skills.report.schemas import InsightRecord, SynthesisOutput, SynthesisRecord
-from storage import r2
 
 ROLE = "report"
 PROMPT = "synthesize"
@@ -35,35 +31,8 @@ def _requirements_text(requirements):
     return "\n".join(f"[{i}] {req}" for i, req in enumerate(requirements, 1))
 
 
-def _table_columns(path):
-    """Ten cot cua file .csv/.parquet, chi doc phan dau file, khong doc gia tri dong. Khong doc duoc -> None."""
-    try:
-        if path.suffix.lower() == ".parquet":
-            return list(pq.read_schema(path).names)
-        fmt = r2.detect_csv_format(path)
-        return list(pd.read_csv(path, nrows=0, sep=fmt["delimiter"], encoding=fmt["encoding"]).columns)
-    except (OSError, ValueError):
-        return None
-
-
-def _result_files(ledger, r, log):
-    """File cua mot ket qua: output_path cong files_created cua moi lan thu cung buoc (<id>_<key>) trong run_log.
-    Khong chi output_path: runner chi liet ke file doi noi dung, nen file lan thu hong da ghi roi lan dat ghi y het
-    khong co trong output_path. File da chuyen di (--restart) thi bo."""
-    logged = [f for e in log if e.step == "runner" and e.action == f"{r.id}_{r.question_key}"
-              for f in e.extra.get("files_created") or []]
-    paths = [ledger.root / p for p in (r.output_path or "").split("; ") if p] + [Path(f) for f in logged]
-    return sorted({p.resolve() for p in paths if p.is_file()}, key=lambda p: p.name)
-
-
-def _result_tables(ledger, valid):
-    """{id ket qua: [(ten file, ten cot hoac None)]}, chi file .csv/.parquet."""
-    log = ledger.read_log()
-    return {r.id: [(p.name, _table_columns(p)) for p in _result_files(ledger, r, log)
-                   if p.suffix.lower() in (".csv", ".parquet")] for r in valid}
-
-
-def _table_text(name, columns, short):
+def _table_text(table, short):
+    name, columns = table["name"], table["columns"]
     if short or columns is None:
         return name
     shown = columns[:config.REPORT_TABLE_MAX_COLUMNS]
@@ -78,7 +47,7 @@ def _result_line(r, tables, short=False):
              f"result_summary: {json.dumps(r.result_summary, ensure_ascii=False)}",
              f"checks: {n_pass} pass, {n_other} not pass"]
     if tables:
-        parts.append("tables: " + "; ".join(_table_text(name, columns, short) for name, columns in tables))
+        parts.append("tables: " + "; ".join(_table_text(t, short) for t in tables))
     return " | ".join(parts)
 
 
@@ -120,7 +89,7 @@ def build_variables(ledger, flags=()):
     valid = [r for r in ledger.results() if r.status == ResultStatus.VALID]
     problem = _problem_view(ledger)
     decisions = [d for d in ledger.decisions() if d.status == DecisionStatus.CONFIRMED]
-    tables = _result_tables(ledger, valid)
+    tables = {r.id: result_tables(ledger, r.id) for r in valid}
     variables = {"problem": problem.get("problem", ""), "requirements": _requirements_text(requirements_of(problem)),
                  "results": _results_text(valid, tables),
                  "confirmed_decisions": "\n".join(map(loop._decision_line, decisions)) or "(none)",
