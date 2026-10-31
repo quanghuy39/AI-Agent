@@ -283,9 +283,54 @@ def test_default_keeps_file_order_with_two_text_columns(led, labels):
     assert first_column(led, frame) == ["X", "Y", "Z"]
 
 
-def test_explicit_sort_wins_on_two_text_columns(led):
-    frame = SHUFFLED.assign(brand=["P", "Q", "R"])[["group", "brand", "total"]]
-    assert first_column(led, frame, sort={"by": "total"}) == ["B", "A", "C"]
+BRANDS = pd.DataFrame({"group": ["A", "B", "A", "C", "B", "A"], "brand": ["P", "Q", "R", "S", "T", "U"],
+                       "total": [1, 9, 3, 7, 2, 2]})  # tong A=6, B=11, C=7
+
+
+def rows_of(led, frame, **table):
+    first_column(led, frame, **table)
+    spec = {"file": "by_group.csv", "columns": list(frame.columns), **table}
+    doc = built(led, {**RECORD, "insights": [insight(1, 1, table=spec), insight(2, 2)]})
+    return [[c.text for c in r.cells] for r in doc.tables[0].rows[1:]]
+
+
+def test_sort_on_two_labels_groups_by_total_then_number(led):
+    assert [r[:2] for r in rows_of(led, BRANDS, sort={"by": "total"})] == [
+        ["B", "Q"], ["B", "T"], ["C", "S"], ["A", "R"], ["A", "U"], ["A", "P"]]
+
+
+def test_sort_ascending_keeps_groups_together(led):
+    assert [r[0] for r in rows_of(led, BRANDS, sort={"by": "total", "desc": False})] == ["A", "A", "A", "C", "B", "B"]
+
+
+def test_sort_groups_with_equal_total_stay_together(led):
+    frame = pd.DataFrame({"group": ["A", "B", "A", "B"], "brand": ["P", "Q", "R", "S"], "total": [1, 2, 3, 2]})
+    assert [r[1] for r in rows_of(led, frame, sort={"by": "total"})] == ["R", "P", "Q", "S"]
+
+
+def test_sort_code_and_name_then_brand_groups_by_first_label(led):
+    frame = BRANDS.assign(category_id=BRANDS["group"].map({"A": "C1", "B": "C2", "C": "C3"}))
+    rows = rows_of(led, frame[["category_id", "group", "brand", "total"]], sort={"by": "total"})
+    assert [r[0] for r in rows] == ["C2", "C2", "C3", "C1", "C1", "C1"]
+
+
+def test_sort_by_hidden_number_also_groups(led):
+    frame = BRANDS.assign(other=[9, 1, 8, 1, 1, 7])
+    frame.to_csv(led.root / "work" / "by_group.csv", index=False)
+    spec = {"file": "by_group.csv", "columns": ["group", "brand"], "sort": {"by": "other"}}
+    doc = built(led, {**RECORD, "insights": [insight(1, 1, table=spec), insight(2, 2)]})
+    assert [r.cells[1].text for r in doc.tables[0].rows[1:]] == ["P", "R", "U", "Q", "T", "S"]
+
+
+def test_sort_one_label_stays_flat(led):
+    frame = pd.DataFrame({"category_id": ["C1", "C2", "C3"], "group": ["A", "B", "C"], "total": [2, 3, 1]})
+    assert first_column(led, frame, sort={"by": "total"}) == ["C2", "C1", "C3"]
+
+
+def test_group_rows_stay_together_before_cut(led):
+    frame = pd.DataFrame({"group": ["A"] * 30 + ["B"] * 30, "brand": [f"T{i}" for i in range(60)], "total": [1] * 30 + [2] * 30})
+    rows = rows_of(led, frame, sort={"by": "total"})
+    assert [r[0] for r in rows] == ["B"] * 30 + ["A"] * 10
 
 
 @pytest.mark.parametrize("codes, expected", [(["C2", "C3", "C1"], ["C3", "C2", "C1"]), ([2, 3, 1], ["3", "2", "1"])])
