@@ -9,6 +9,7 @@ import copy
 import pandas as pd
 import pytest
 
+import config
 from ledger import Ledger
 from profiling import data_summary as ds
 from profiling import dictionary as dd
@@ -342,6 +343,50 @@ def test_cli_writes_ai_summary_and_keeps_other_keys(tmp_path, monkeypatch, capsy
     assert saved["ai_summary"]["settings"]["max_chars"] == 4000
     with pytest.raises(SystemExit):
         ds.main(["b1", "--sensitive", "CUSTOMER.nope"])
+
+
+DICT_KEY = "input/b1/data_dictionary.md"
+
+
+def change_etag(monkeypatch):
+    monkeypatch.setattr(r2, "list_objects", lambda prefix, grader=False: [
+        {"key": k, "etag": "moi" if k == DICT_KEY else "e"} for k in FILES if k.startswith(prefix)])
+
+
+def test_cli_stops_when_dictionary_changed_then_refresh_fixes(tmp_path, monkeypatch, capsys):
+    assert make_report(tmp_path, monkeypatch, FILES)["dictionary"]["etag"] == "e"
+    assert ds.main(["b1"]) == 0
+    change_etag(monkeypatch)
+    assert ds.main(["b1"]) == config.STALE_PROFILE_EXIT_CODE == 3
+    err = capsys.readouterr().err
+    assert "python -m profiling.data_summary b1 --refresh" in err and "--set/--range" in err
+    assert ds.main(["b1", "--refresh", "--range", "ORDERS.amount=0:", "--set", "NULL_RATIO_FLAG=0.01"]) == 0
+    report = Ledger(tmp_path / "output" / "b1").get_data_profile()[quality.REPORT_KEY]
+    assert report["dictionary"]["etag"] == "moi"
+    assert [(c["table"], c["source"]) for c in report["range_checks"]] == [("ORDERS", "argument")]
+    assert ds.main(["b1"]) == 0
+
+
+def test_cli_stops_on_old_profile_without_etag(tmp_path, monkeypatch):
+    make_report(tmp_path, monkeypatch, FILES)
+    led = Ledger(tmp_path / "output" / "b1")
+    profile = led.get_data_profile()
+    del profile[quality.REPORT_KEY]["dictionary"]["etag"]
+    led.set_data_profile(profile)
+    assert ds.main(["b1"]) == config.STALE_PROFILE_EXIT_CODE
+
+
+def test_cli_task_without_dictionary_is_not_stale(tmp_path, monkeypatch):
+    files = {k: v for k, v in FILES.items() if k != DICT_KEY}
+    assert make_report(tmp_path, monkeypatch, files)["dictionary"]["etag"] is None
+    assert ds.main(["b1"]) == 0
+
+
+@pytest.mark.parametrize("extra", [["--set", "NULL_RATIO_FLAG=0.01"], ["--range", "ORDERS.amount=0:"]])
+def test_cli_set_and_range_need_refresh(tmp_path, monkeypatch, extra):
+    make_report(tmp_path, monkeypatch, FILES)
+    with pytest.raises(SystemExit):
+        ds.main(["b1", *extra])
 
 
 def test_cli_runs_profile_when_missing(tmp_path, monkeypatch, capsys):

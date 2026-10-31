@@ -69,6 +69,15 @@ def copy_data(paths, names, dest):
         shutil.copyfile(paths[n], dest / f"{n}.csv")
 
 
+def tag_sensitive(dd):
+    """Ban sao dd co (SENSITIVE) o Customer.customer_id; dd goc giu nguyen vi sheet nay con dung cho bai0b."""
+    customer = dd["Customer"].copy()
+    hit = customer["Column Name"].str.strip() == "customer_id"
+    assert hit.sum() == 1 and customer.loc[hit, "Data Type"].str.contains("(PK)", regex=False).all()
+    customer.loc[hit, "Data Type"] = customer.loc[hit, "Data Type"].str.replace("(PK)", "(PK, SENSITIVE)", regex=False)
+    return {**dd, "Customer": customer}
+
+
 def build_bai1(paths, dd, outdir=OUT):
     i, a = outdir / "input/bai1", outdir / "answers/bai1"
     for d in (i, a):
@@ -77,7 +86,8 @@ def build_bai1(paths, dd, outdir=OUT):
         d.mkdir(parents=True)
     copy_data(paths, ["CUSTOMER", "ORDER", "STORE", "CHANNEL"], i)
     (i / "de_bai.md").write_text(DE_BAI1, encoding="utf-8")
-    (i / "data_dictionary.md").write_text(dd_to_md(dd, ["Customer", "Order", "Store", "Channel"]), encoding="utf-8")
+    (i / "data_dictionary.md").write_text(dd_to_md(dd, ["Customer", "Order", "Store", "Channel"]), encoding="utf-8",
+                                          newline="\n")
 
     c = pd.read_csv(paths["CUSTOMER"])
     o = pd.read_csv(paths["ORDER"])
@@ -184,7 +194,7 @@ def build_bai2(paths, dd, outdir=OUT):
     copy_data(paths, ["CAMPAIGN_TOUCH", "MARKETING_CHANNEL", "CUSTOMER", "ORDER"], i)
     (i / "de_bai.md").write_text(DE_BAI2, encoding="utf-8")
     (i / "data_dictionary.md").write_text(
-        dd_to_md(dd, ["Campaign_Touch", "Marketing_Channel", "Customer", "Order"]), encoding="utf-8")
+        dd_to_md(dd, ["Campaign_Touch", "Marketing_Channel", "Customer", "Order"]), encoding="utf-8", newline="\n")
 
     t = pd.read_csv(paths["CAMPAIGN_TOUCH"])
     mc = pd.read_csv(paths["MARKETING_CHANNEL"])
@@ -272,7 +282,7 @@ def build_bai2(paths, dd, outdir=OUT):
 
 def main():
     from storage.r2 import download_with_cache
-    dd = pd.read_excel(download_with_cache("input/Data Dictionary.xlsx"), sheet_name=None)
+    dd = tag_sensitive(pd.read_excel(download_with_cache("input/Data Dictionary.xlsx"), sheet_name=None))
     paths = {n: download_with_cache(f"input/{n}.csv") for n in
              ("CUSTOMER", "ORDER", "STORE", "CHANNEL", "CAMPAIGN_TOUCH", "MARKETING_CHANNEL")}
     build_bai1(paths, dd)

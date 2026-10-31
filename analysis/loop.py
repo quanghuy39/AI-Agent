@@ -127,29 +127,26 @@ def _read_problem(task):
     return Path(r2.download_with_cache(key)).read_text(encoding="utf-8-sig")
 
 
-def _sensitive(task, report, sensitive):
-    """--sensitive + mac dinh cua bai (chi cot co that); (SENSITIVE) cua dictionary do build_data_summary tu gop."""
-    out = list(sensitive or [])
-    cols = {n: list(t["columns"]) for n, t in report["tables"].items()}
-    for spec in config.ANALYSIS_DEFAULT_SENSITIVE.get(task, []):
+def saved_report(led, task):
+    """Report da luu, chua co thi None. Dictionary tren R2 da doi -> StopLoop (khong tu profile lai)."""
+    profile = led.get_data_profile()
+    report = profile.get(quality.REPORT_KEY) if isinstance(profile, dict) else None
+    if report is not None:
         try:
-            quality.resolve_table_column(spec, cols, "sensitive")
-        except ValueError:
-            continue
-        if spec not in out:
-            out.append(spec)
-    return out
+            quality.check_dictionary_current(report, task)
+        except quality.StaleProfileError as e:
+            raise StopLoop(str(e)) from None
+    return report
 
 
 def load_context(task, sensitive=None):
     led = Ledger(runner.OUTPUT_DIR / task)
     problem = _read_problem(task)
-    profile = led.get_data_profile()
-    report = profile.get(quality.REPORT_KEY) if isinstance(profile, dict) else None
+    report = saved_report(led, task)
     if report is None:
         report = quality.profile_problem(task)
     quality.ensure_flag_keys(report)
-    columns = _sensitive(task, report, sensitive)
+    columns = list(sensitive or [])  # (SENSITIVE) cua dictionary va email/phone do build_data_summary tu gop
     try:
         summary = build_data_summary(report, sensitive=columns, max_chars=config.SUMMARY_MAX_CHARS)
     except ValueError as e:  # bang/cot trong --sensitive khong ton tai

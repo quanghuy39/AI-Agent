@@ -161,8 +161,7 @@ REPORT_CHART_PALETTE = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "
 REPORT_MAX_DECIMALS = 2              # so chu so thap phan toi da khi dien so co |x| >= 1 vao van ban
 REPORT_SIG_DIGITS = 3                # so chu so co nghia khi dien so co 0 < |x| < 1 (ty le nho khong bi lam tron mat)
 REPORT_PERCENT_FIELD_HINTS = ("pct", "percent")  # ten truong chua mot tu nay moi duoc viet % phia sau
-# Cot che mac dinh theo bai (cong voi (SENSITIVE) trong dictionary va --sensitive); chi ap dung khi cot co that.
-ANALYSIS_DEFAULT_SENSITIVE = {"bai1": ["CUSTOMER.customer_id"]}
+STALE_PROFILE_EXIT_CODE = 3          # profile khong khop dictionary: cung ma voi loop.STOPPED
 # Module goc (phan truoc dau cham dau tien) bi cam import trong code AI.
 RUNNER_FORBIDDEN_IMPORTS = ["boto3", "botocore", "storage", "llm", "litellm", "requests", "httpx", "urllib",
                             "socket", "subprocess"]

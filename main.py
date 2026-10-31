@@ -226,7 +226,7 @@ def _open_context(led, task, state, sensitive):
         led.update_state(sensitive=ctx.sensitive)
     elif sensitive and set(ctx.sensitive) != set(state.sensitive):
         raise loop.StopLoop(f"--sensitive khác danh sách đã chốt {state.sensitive}. "
-                            f"Muốn đổi cột che thì chạy lại với --restart.")
+                            f"Muốn đổi cột che thì chạy lại với --restart --sensitive ...")
     return ctx
 
 
@@ -255,6 +255,8 @@ def run_task(task, sensitive=None, max_retries=None, yes=False, ask_user=input, 
     if sync:
         ask_user = _with_sync(ask_user, led, task)
     try:
+        if restart or resynthesize:  # kiem truoc khi doi ho so: profile cu thi dung, chua bo ket qua nao
+            loop.saved_report(led, task)
         if restart:
             _restart(led, sensitive)
         if resynthesize:

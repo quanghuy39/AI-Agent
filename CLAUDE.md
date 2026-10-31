@@ -54,7 +54,7 @@ python config.py                                      # chỉ in OK/THIẾU cho 
 python -m storage.r2 list input/                      # liệt kê; answers/ cần --grader
 python -m storage.r2 head input/bai0a/CATEGORY.csv
 python -m profiling.quality bai0b [--no-samples] [--set TEN=GIATRI] [--range BANG.COT=MIN:MAX]
-python -m profiling.data_summary bai1 [--sensitive BANG.cot] [--max-chars N] [--no-samples] [--refresh]
+python -m profiling.data_summary bai1 [--sensitive BANG.cot] [--max-chars N] [--no-samples] [--refresh [--set TEN=GIATRI] [--range BANG.COT=MIN:MAX]]
 python -m runner.run_code bai1 path\to\code.py [--step TEN] [--timeout GIAY]
 python main.py bai1 [--sensitive BANG.cot] [--restart] [--yes] [--fake] [--no-sync]   # chạy một bài, tiếp từ pha đang dở
 python main.py bai1 --resynthesize [--yes] [--fake] [--no-sync]   # chỉ chạy lại pha synthesize (state synthesize hoặc done)
@@ -69,8 +69,8 @@ python tests/llm_eval/run_eval.py --list              # số case theo role
 python tests/llm_eval/run_eval.py --model <key> --role analysis [--limit N] [--resume] --yes   # GỌI API THẬT
 ```
 `main.py` và `analysis.loop` trả mã: 0 xong, 1 lỗi gọi AI hoặc lỗi R2, 2 hết hạn mức chuỗi model (chạy lại để tiếp tục),
-3 dừng (StopLoop: người dùng từ chối, prompt quá dài sau mọi bậc cắt, `--sensitive` khác state, ...; bản tóm tắt
-lộ giá trị che; hoặc file trong `report/` bị khóa).
+3 dừng (StopLoop: người dùng từ chối, prompt quá dài sau mọi bậc cắt, `--sensitive` khác state, dictionary trên R2 khác
+etag lưu trong profile, ...; bản tóm tắt lộ giá trị che; hoặc file trong `report/` bị khóa).
 Chạy lại: tiếp từ pha trong `state.json`; câu đã giải lấy từ `Ledger.results_by_question()` (chỉ kết quả valid).
 `--sensitive` chốt vào state ở lần chạy đầu, muốn đổi thì `--restart --sensitive ...`. `--restart` chuyển kết quả valid
 và mọi decision thành superseded (giữ trong file, không dùng lại, hỏi lại từ đầu), toàn bộ file `work/` sang

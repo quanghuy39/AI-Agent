@@ -448,9 +448,18 @@ def main(argv=None):
     p.add_argument("--max-chars", type=int, default=None, help=f"ngân sách ký tự (mặc định {config.SUMMARY_MAX_CHARS})")
     p.add_argument("--no-samples", action="store_true", help="không có bản ghi mẫu và top values")
     p.add_argument("--refresh", action="store_true", help="chạy lại profile_problem trước")
+    p.add_argument("--set", action="append", default=[], metavar="TEN=GIATRI",
+                   help="cùng --refresh: ghi đè ngưỡng khi profile lại (như profiling.quality)")
+    p.add_argument("--range", action="append", default=[], metavar="BANG.COT=MIN:MAX",
+                   help="cùng --refresh: kiểm khoảng giá trị khi profile lại (như profiling.quality)")
     args = p.parse_args(argv)
+    if (args.set or args.range) and not args.refresh:
+        p.error("--set, --range chỉ dùng cùng --refresh")
     try:
         quality._check_problem_id(args.problem_id)
+        thresholds = quality._parse_set(args.set)
+        fl.resolve_thresholds(thresholds)
+        ranges = dict(quality._parse_range(r) for r in args.range)
     except ValueError as e:
         p.error(str(e))
 
@@ -458,7 +467,14 @@ def main(argv=None):
     profile = led.get_data_profile()
     report = profile.get(quality.REPORT_KEY) if isinstance(profile, dict) else None
     if report is None or args.refresh:
-        report = quality.profile_problem(args.problem_id, include_samples=not args.no_samples)
+        report = quality.profile_problem(args.problem_id, include_samples=not args.no_samples, thresholds=thresholds,
+                                         ranges=ranges)
+    else:
+        try:
+            quality.check_dictionary_current(report, args.problem_id)
+        except quality.StaleProfileError as e:
+            print(f"LỖI: {e}", file=sys.stderr)
+            return config.STALE_PROFILE_EXIT_CODE
     try:
         summary = build_data_summary(report, sensitive=args.sensitive, max_chars=args.max_chars,
                                      include_samples=not args.no_samples)

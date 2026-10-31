@@ -446,10 +446,30 @@ def _read_text(key):
     return raw.decode("latin-1", errors="replace")
 
 
+class StaleProfileError(Exception):
+    """Report trong data_profile.json khong khop dictionary hien tai tren R2."""
+
+
+def dictionary_etag(objects):
+    """Etag cua file dictionary bai dang dung trong danh sach R2; khong co dictionary -> None."""
+    key = dictionary.find_dictionary([o["key"] for o in objects])["key"]
+    return next((o.get("etag") for o in objects if o["key"] == key), None)
+
+
+def check_dictionary_current(report, problem_id):
+    """Report da luu phai dung dung dictionary tren R2; khac hoac chua luu etag -> StaleProfileError, khong tu profile lai."""
+    prefix = f"{r2.get_r2_settings()['R2_INPUT_PREFIX']}{problem_id}/"
+    info = report.get("dictionary") or {}
+    if "etag" not in info or info["etag"] != dictionary_etag(r2.list_objects(prefix)):
+        raise StaleProfileError(f"Dictionary của {problem_id} đã đổi so với profile đã lưu (hoặc profile cũ chưa lưu etag). "
+                                f"Chạy python -m profiling.data_summary {problem_id} --refresh "
+                                f"(kèm lại --set/--range nếu đã dùng).")
+
+
 def _load_dictionary(objects):
     """Tim va doc dictionary. Tra ve (thong tin cap bai, cac key khong profile nhu bang du lieu)."""
     found = dictionary.find_dictionary([o["key"] for o in objects])
-    info = {"file": found["key"], "format": found["format"], "status": found["status"],
+    info = {"file": found["key"], "etag": dictionary_etag(objects), "format": found["format"], "status": found["status"],
             "tables_without_file": [], "files_without_dictionary": [],
             "parse_warnings": list(found["warnings"]), "tables": {}}
     if found["status"] == "ok":

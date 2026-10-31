@@ -13,7 +13,7 @@ Cập nhật: 31/10/2026. Nguồn: git log, code trong repo, tóm tắt cuối n
 | 5 | Xong | Runner, skill phân tích, meta_grader, `analysis.loop`, fit_prompt, bộ kiểm định theo skill thật; chốt chuỗi analysis. Bài 0a ĐẠT toàn bộ; bài 1 chạy trọn 4 câu, số liệu đúng, phán đoán BI chưa đạt. 645 test pass. |
 | 6 | Xong | Điều phối theo pha, chạy tiếp được, `--fake` tách hồ sơ, điểm dừng xác nhận, decision pending và superseded, cờ chất lượng thành decision, `context_builder`, đồng bộ hồ sơ lên R2, 5 quy tắc chung trong prompt, `tests.grade <bài>`. Bài 2 chạy thật: số tổng hợp khớp, phán đoán BI chưa đạt. 858 test pass. |
 | 7 | Xong | Kiểm định report; pha synthesize; `output_path` đủ file bảng; biểu đồ, Word, hồ sơ bài toán, dàn ý slide, `--resynthesize`, `--build-report`. Bài 0a chạy thật: `grade_bai0a` ĐẠT 3/3, Word đủ 7 mục, không còn placeholder trong Word và `slides_outline.json`, mọi insight dẫn về id kết quả. 1239 test pass, commit cuối 2fb62a9. |
-| 8 | Chưa | Xem "Kế hoạch Ngày 8". |
+| 8 | Đang làm | Đã xong: cột nhạy cảm khai báo trong dictionary, bỏ hằng số cột che mặc định trong `config.py`, profile lưu etag dictionary và dừng mã 3 khi lệch, chưa commit. 1251 test pass. Còn lại xem "Kế hoạch Ngày 8". |
 
 ## Ngày 5
 
@@ -131,8 +131,8 @@ Mục 1, điều phối theo pha:
   Lỗi cũ: chạy tiếp bị lệch kịch bản, câu trả lời sai schema rồi báo nhầm là hết hạn mức.
 - `Dockerfile` thêm `COPY analysis/`. Chưa build được (Docker Desktop tắt); đã kiểm bằng cách chép đúng các mục COPY sang
   thư mục trống rồi import và chạy `main.py --help`.
-- Dictionary bài 1 (bản trong `cache/input/bai1/`) không có thẻ `(SENSITIVE)`: `CUSTOMER.customer_id` chỉ có `(PK)`. Cột
-  này được che nhờ `config.ANALYSIS_DEFAULT_SENSITIVE`; `ORDER.customer_id` che theo quan hệ.
+- `CUSTOMER.customer_id` bài 1 che bằng thẻ `(PK, SENSITIVE)` trong dictionary (từ Ngày 8, trước đó bằng hằng số trong `config.py`);
+  `ORDER.customer_id` che theo quan hệ.
 
 Mục 2 + 3, điểm dừng và decision chờ xác nhận:
 - Giả định của kế hoạch, khoảng hợp lệ và cờ mức flag được ghi `pending` vào `decisions.json` TRƯỚC khi hỏi; `_add_confirmed`
@@ -222,8 +222,7 @@ Mục 6, chuẩn bị chạy bài 2:
 - Kích thước ước lượng bài 2 (cách đo như mục 4, đã che `CUSTOMER.customer_id`, ngân sách 8.100 token): plan ~4.694 thành
   ~4.805, step chưa có kết quả ~4.583 thành ~4.718.
 - `python -m tests.grade <bài>` dùng chung cho mọi bài; `python -m tests.grade_bai1` gọi vào đó.
-- Chạy bài 2 lần đầu phải có `--sensitive CUSTOMER.customer_id`: `ANALYSIS_DEFAULT_SENSITIVE` không có bài 2, dictionary
-  không có thẻ `(SENSITIVE)`, không truyền thì bản tóm tắt lộ mã khách.
+- Từ Ngày 8 bài 2 không cần `--sensitive CUSTOMER.customer_id`: dictionary đã có thẻ `(SENSITIVE)`.
 
 Sửa `--restart` (kiểm bằng FakeLLM và R2 giả; hồ sơ `bai2` thật chưa chạy lại). Lỗi: `--restart` chỉ đổi kết
 quả, decision cũ vẫn confirmed nên được dùng lại theo `source_key` (D1, D3 `bai2` không được hỏi lại) và vẫn gửi cho AI.
@@ -376,7 +375,12 @@ Sau lần chạy thật `bai0a` (số liệu đúng, đã xem Word):
 - AI phân loại giả định thành 3 kind của ledger (`metric_definition`, `assumption`, `anomaly_handling`) để ghi
   thẳng bằng `add_decision`.
 - Ngày 5 chỉ có xác nhận y/n đơn giản; điểm dừng đầy đủ để Ngày 6.
-- Bài 1 chỉ che `CUSTOMER.customer_id` (`config.ANALYSIS_DEFAULT_SENSITIVE`).
+- Cột che lấy từ 3 nguồn: thẻ `(SENSITIVE)` trong dictionary, `--sensitive`, tự nhận email/phone. `CUSTOMER.customer_id` của bài 1, 2
+  ghi `(PK, SENSITIVE)` trong `input/<bài>/data_dictionary.md` trên R2; `tests/make_bai1_bai2.py` sinh đúng bản đó (`tag_sensitive`),
+  `input/Data Dictionary.xlsx` không đổi.
+- Profile lưu etag dictionary (`report["dictionary"]["etag"]`). Dùng lại report (`load_context`, `profiling.data_summary`) mà etag khác R2
+  hoặc profile cũ chưa có etag thì dừng mã 3, không tự profile lại vì sẽ mất `--set`, `--range`. Sửa bằng
+  `python -m profiling.data_summary <bài> --refresh` (lệnh này nhận `--set`, `--range`). `--restart`, `--resynthesize` kiểm trước khi đổi hồ sơ.
 - Bỏ Groq (`groq_gpt_oss_120b`) khỏi chuỗi analysis: chưa qua kiểm định, tpm 8000 quá nhỏ,
   trần 5000 token làm bài 1 dừng ở Q4. Giới hạn prompt nhỏ nhất của analysis giờ là 9000 token
   (`context_builder.min_input_tokens("analysis")`, do gemma_4_31b).
@@ -432,11 +436,16 @@ Bỏ: chạy trong container (giữ Dockerfile), chạy lại bài 1. Cập nh�
 - `tests/grade.py` đối chiếu theo từ khóa: LỆCH, CẦN NGƯỜI XEM và đánh giá bẫy cần người xem lại (hai mục bẫy script chấm ĐÃ NÊU
   thực ra là trùng từ).
 - Dictionary bài 1, 2 nhắc bảng EXTERNAL_FACTOR, PRICE_CHANGE không có trong dữ liệu.
-- Thêm thẻ `(SENSITIVE)` cho `CUSTOMER.customer_id` trong dictionary `bai1`, `bai2` trên R2, rồi bỏ `ANALYSIS_DEFAULT_SENSITIVE`.
+- `state.sensitive` chỉ lưu `--sensitive`, không lưu cột che từ dictionary: mã 3 chỉ xảy ra khi `--sensitive` khác state, thẻ dictionary đổi
+  giữa chừng thì không dừng.
 - Che giá trị chỉ thay chuỗi khớp nguyên văn (giá trị >= 4 ký tự); reason của check custom lấy nguyên từ meta.
 - Báo cáo cũ gắn `source_key` theo ngưỡng mặc định vì báo cáo không lưu ngưỡng đã dùng (`--set` lúc profiling).
 
 ### Hạ tầng
+- `--fake` trên hồ sơ `output/_fake/<bài>/` cũ dừng mã 3 (profile chưa có etag), lệnh `--refresh` trong thông báo không đụng tới `_fake`:
+  phải xóa tay `output/_fake/<bài>/data_profile.json`, lần `--fake` sau tự profile lại.
+- `test_interrupted_at_conclusion_reasks_without_calling_ai` rớt 1 lần khi chạy pytest song song với profiling file lớn (Q2 thử lại, hết kịch
+  bản FakeLLM); chạy riêng 3 lần và chạy toàn bộ lúc máy rảnh đều pass. Tránh chạy pytest cùng lúc với việc nặng.
 - Đồng bộ tải cả file tạm `~$*` của Word lên R2: cần bỏ qua.
 - Bản sao thừa `_superseded/report_20261031_131229_032292` còn trên R2 (và ở `output/bai0a/`): đồng bộ không xóa, phải xóa tay.
 - `test_build_report_does_not_call_ai_and_rebuilds` từng rớt một lần khi có Word ẩn (lần chạy đó chậm gấp 5), chưa rõ nguyên nhân,

@@ -857,11 +857,76 @@ def test_different_sensitive_stops_and_suggests_restart(env, capsys):
     assert env.get_state().sensitive == [SPEC] and env.get_state().phase == state.phase
 
 
-def test_default_sensitive_of_task_does_not_count_as_different(env, monkeypatch):
-    monkeypatch.setitem(loop.config.ANALYSIS_DEFAULT_SENSITIVE, TASK, [SPEC])
-    run([RESTATEMENT, PLAN, LLMChainExhausted("hết")], sensitive=["PRODUCT.price"])
-    assert set(env.get_state().sensitive) == {SPEC, "PRODUCT.price"}
-    assert run([STEP1, STEP2], sensitive=["PRODUCT.price"])[0] == loop.DONE
+@pytest.mark.parametrize("product_id_type, masked", [
+    ("string (PK, SENSITIVE)", {(("PRODUCT", "product_id"), "dictionary"), (("PRODUCT", "contact"), "auto_email")}),
+    ("string (PK)", {(("PRODUCT", "contact"), "auto_email")}),
+])
+def test_masking_comes_from_dictionary_tag_without_sensitive_arg(env, monkeypatch, product_id_type, masked):
+    rows = "".join(f"{p},{p.lower()}@vidu.vn\n" for p in IDS)
+    monkeypatch.setitem(FILES, f"input/{TASK}/PRODUCT.csv", "product_id,contact\n" + rows)
+    monkeypatch.setitem(FILES, f"input/{TASK}/data_dictionary.md",
+                        f"## PRODUCT\n\n| Cột | Kiểu | Định nghĩa |\n|---|---|---|\n| product_id | {product_id_type} | Mã |\n"
+                        "| contact | string | Liên hệ |\n")
+    ctx = loop.load_context(TASK)
+    got = {((m["table"], m["column"]), m["reason"]) for m in ctx.summary["masked_columns"]}
+    assert got == masked and ctx.sensitive == []
+    assert ("P0002" in ctx.summary["text"]) == (product_id_type == "string (PK)")
+
+
+# etag dictionary luu trong profile
+DICT_KEY = f"input/{TASK}/data_dictionary.md"
+DICT_MD = "## PRODUCT\n\n| Cột | Kiểu | Định nghĩa |\n|---|---|---|\n| product_id | string (PK) | Mã |\n"
+
+
+def change_dictionary_etag(monkeypatch):
+    monkeypatch.setattr(r2, "list_objects", lambda prefix, grader=False: [
+        {"key": k, "etag": "moi" if k == DICT_KEY else "e"} for k in FILES if k.startswith(prefix)])
+
+
+def test_same_dictionary_etag_resumes_normally(env, monkeypatch):
+    monkeypatch.setitem(FILES, DICT_KEY, DICT_MD)
+    assert run([RESTATEMENT, PLAN, LLMChainExhausted("hết")])[0] == loop.EXHAUSTED
+    assert env.get_data_profile()[quality.REPORT_KEY]["dictionary"]["etag"] == "e"
+    assert run([STEP1, STEP2])[0] == loop.DONE
+
+
+def test_changed_dictionary_etag_stops_with_refresh_hint(env, monkeypatch, capsys):
+    monkeypatch.setitem(FILES, DICT_KEY, DICT_MD)
+    run([RESTATEMENT, PLAN, LLMChainExhausted("hết")])
+    phase = env.get_state().phase
+    before = env.get_data_profile()
+    change_dictionary_etag(monkeypatch)
+    code, fake = run([])
+    out = capsys.readouterr().out
+    assert code == loop.STOPPED == 3 and fake.calls == []
+    assert f"python -m profiling.data_summary {TASK} --refresh" in out and "--set/--range" in out
+    assert env.get_state().phase == phase and env.get_data_profile() == before  # khong tu profile lai
+
+
+def test_old_profile_without_etag_stops(env):
+    run([RESTATEMENT, PLAN, LLMChainExhausted("hết")])
+    profile = env.get_data_profile()
+    del profile[quality.REPORT_KEY]["dictionary"]["etag"]
+    env.set_data_profile(profile)
+    assert run([])[0] == loop.STOPPED
+
+
+@pytest.mark.parametrize("flag", ["restart", "resynthesize"])
+def test_changed_dictionary_stops_before_touching_record(env, monkeypatch, flag):
+    monkeypatch.setitem(FILES, DICT_KEY, DICT_MD)
+    run(FULL)
+    results, insights = env.results_by_question(), env.get_insights()
+    change_dictionary_etag(monkeypatch)
+    assert run([], **{flag: True})[0] == loop.STOPPED
+    assert env.results_by_question() == results and env.get_insights() == insights
+    assert env.get_state().phase == Phase.DONE
+
+
+def test_build_report_stops_when_dictionary_changed(env, monkeypatch):
+    monkeypatch.setitem(FILES, DICT_KEY, DICT_MD)
+    run(FULL)
+    change_dictionary_etag(monkeypatch)
+    assert run([], build_report=True)[0] == loop.STOPPED
 
 
 def test_restart_can_change_sensitive_and_keeps_it_otherwise(env):
