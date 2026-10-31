@@ -53,6 +53,7 @@ python -m profiling.quality bai0b [--no-samples] [--set TEN=GIATRI] [--range BAN
 python -m profiling.data_summary bai1 [--sensitive BANG.cot] [--max-chars N] [--no-samples] [--refresh]
 python -m runner.run_code bai1 path\to\code.py [--step TEN] [--timeout GIAY]
 python main.py bai1 [--sensitive BANG.cot] [--restart] [--yes] [--fake] [--no-sync]   # chạy một bài, tiếp từ pha đang dở
+python main.py bai1 --resynthesize [--yes] [--fake] [--no-sync]   # chỉ chạy lại pha synthesize (state synthesize hoặc done)
 python -m analysis.loop bai1 [--sensitive BANG.cot] [--use-fake] [--max-retries 3] [--yes] [--no-sync]   # cùng luồng main.py
 python -m storage.sync bai1 [--dry-run]               # đồng bộ hồ sơ lên R2; --dry-run chỉ in số file, không ghi gì
 python -m tests.grade_bai0b                           # chấm profiling bài 0b bằng answers/ (quyền grader)
@@ -69,6 +70,10 @@ Chạy lại: tiếp từ pha trong `state.json`; câu đã giải lấy từ `L
 `--sensitive` chốt vào state ở lần chạy đầu, muốn đổi thì `--restart --sensitive ...`. `--restart` chuyển kết quả valid
 và mọi decision thành superseded (giữ trong file, không dùng lại, hỏi lại từ đầu), toàn bộ file `work/` sang
 `work/_superseded/<thời điểm>/`, `insights.json` sang `_superseded/`, đóng open_item của bước xác nhận; run_log giữ nguyên.
+Điểm dừng danh sách câu hỏi nhỏ: y chấp nhận, n dừng, s gõ góp ý (vào `user_corrections`, kèm câu hỏi của kế hoạch cũ gửi AI
+lập lại, tối đa `ANALYSIS_PLAN_MAX_RETRIES` lần; decision kế hoạch mới không còn thì superseded).
+`--resynthesize`: `insights.json` sang `_superseded/`, decision chấp nhận kết luận thành superseded rồi hỏi lại, kết quả và
+decision khác giữ nguyên; pha sớm hơn thì từ chối, mã 3; không dùng cùng `--restart`, `--sensitive`.
 Đồng bộ R2 (trừ `--fake`, `--no-sync`): trước mỗi câu hỏi xác nhận, khi xong và khi thoát vì lỗi; lỗi đồng bộ chỉ cảnh
 báo một dòng, ghi sự kiện `sync` trong run_log, lần sau tải lại nhờ manifest. `run_task` gọi trực tiếp thì mặc định tắt.
 Lọc output tiếng Việt bằng `Select-String` cần `[Console]::OutputEncoding = [Text.Encoding]::UTF8`.

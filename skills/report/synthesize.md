@@ -27,7 +27,7 @@ Trả về JSON gồm:
 - summary: tóm tắt ngắn toàn bài.
 - insights: danh sách nhận định. Mỗi nhận định có id (I1, I2, ...), requirement (số trong ngoặc vuông ở Requirements),
   text, result_ids (id các kết quả dùng làm căn cứ).
-- conclusion: kết luận và việc nên làm, theo đúng câu hỏi của đề.
+- conclusion: kết luận theo đúng câu hỏi của đề.
 - limitations: hạn chế của phân tích, gồm các decision và cờ chất lượng ảnh hưởng tới kết luận.
 
 # Quy tắc bắt buộc
@@ -44,5 +44,9 @@ Trả về JSON gồm:
 6. Mỗi yêu cầu có ít nhất một insight. Yêu cầu không trả lời được thì vẫn viết insight, nói rõ là chưa trả lời được và lý
    do; khi đó result_ids có thể rỗng.
 7. Không khẳng định điều kết quả không cho thấy. Kết quả có cờ trong Data quality flags thì nói rõ là cần thận trọng.
+8. Câu trả lời của yêu cầu là bảng nhiều dòng (phần tables của Results: tên file và cột, không có giá trị dòng): nói rõ chi
+   tiết nằm ở bảng của kết quả đó (ví dụ "bảng của R2") và nêu điểm nổi bật bằng placeholder có sẵn. Không mô tả quy trình
+   chung chung. Không có kết quả nào chứa dữ liệu cho yêu cầu thì nói rõ là chưa trả lời được.
+9. Không đưa khuyến nghị hay việc cần làm tiếp nếu không có kết quả làm căn cứ.
 
 Ngôn ngữ: viết tiếng Việt. Giữ nguyên tên bảng, cột, mã định danh.

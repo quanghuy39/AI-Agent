@@ -298,12 +298,13 @@ class Ledger:
                 return decisions[i]
         raise KeyError(f"không có quyết định {decision_id}")
 
-    def supersede_decisions(self):
-        """Moi decision chua superseded (ke ca pending) thanh superseded, khong xoa. Tra ve cac id da doi."""
+    def supersede_decisions(self, source_key=None):
+        """Moi decision chua superseded (ke ca pending) thanh superseded, khong xoa. Co source_key thi chi cac decision
+        cung source_key. Tra ve cac id da doi."""
         decisions = self.decisions()
         changed = []
         for d in decisions:
-            if d.status != DecisionStatus.SUPERSEDED:
+            if d.status != DecisionStatus.SUPERSEDED and source_key in (None, d.source_key):
                 d.status = DecisionStatus.SUPERSEDED
                 changed.append(d.id)
         self._write_models(DECISIONS, decisions)

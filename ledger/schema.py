@@ -180,6 +180,7 @@ class RunState(_Model):
     """Tien do cua mot bai (state.json). phase: pha dang do. Cau nao da giai thi hoi Ledger.results_by_question."""
     phase: Phase
     plan: dict[str, Any] | None = None  # AnalysisPlan.model_dump
+    replaced_plan: dict[str, Any] | None = None  # ke hoach nguoi dung gop y sua, giu toi khi co ke hoach moi
     sensitive: list[str] | None = None  # cot che "BANG.cot" cua lan chay dau; None: chua chot
     model: str | None = None  # model da dung gan nhat, de so doi model khi chay tiep o tien trinh moi
     updated_at: str = Field(default_factory=now_iso)

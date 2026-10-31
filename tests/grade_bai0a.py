@@ -209,7 +209,8 @@ def judge_note(item, agent_cat, summary, checks, table_ok):
         return ("ĐẠT" if set(ids) <= max_ids else "RỚT"), f"agent báo đủ nhóm đồng hạng {ids}"
     if re.search(r"(lớn|nhiều|cao)\b.*\bnhất|max", low) and ids:
         n = _num(summary, r"max.*(count|n_|so)|(count|so).*max|top.*count")
-        good = set(ids) == max_ids and (not nums or n == nums[-1])
+        codes = {x for x in max_ids if re.fullmatch(r"CAT\d+", x)}  # danh sach co the kem ten nhom, chi so ma
+        good = set(ids) == codes and (not nums or n == nums[-1])
         return ("ĐẠT" if good else "RỚT"), f"nhóm lớn nhất của agent {sorted(max_ids)}, số {n}"
     if len(ids) == 1 and nums:
         got = agent_cat.get(ids[0])

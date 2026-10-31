@@ -5,6 +5,7 @@ Chay: python -m pytest tests/test_synthesize.py -v
 
 import json
 
+import pandas as pd
 import pytest
 
 import config
@@ -413,5 +414,70 @@ def test_too_long_stops_with_open_item(led, monkeypatch):
 
 def test_short_results_only_drop_method(led):
     valid = led.results()
-    assert "method:" in _results_text(valid) and "method:" not in _results_text(valid, with_method=False)
-    assert _results_text([]) == "(none)"
+    assert "method:" in _results_text(valid, {}) and "method:" not in _results_text(valid, {}, short=True)
+    assert _results_text([], {}) == "(none)"
+
+
+# 6. bang ket qua
+def table_ledger(led):
+    work = led.root / "work"
+    work.mkdir()
+    (work / "by_group.csv").write_text("group,total\nBIMAT_DONG,98765\n", encoding="utf-8")
+    pd.DataFrame({"a": ["GIATRI_DONG"], "b": [1]}).to_parquet(work / "wide.parquet")
+    (work / "top.json").write_text("{}", encoding="utf-8")
+    (work / "empty.csv").write_text("", encoding="utf-8")
+    led.add_result("Bảng?", "m", {"n": 1}, PASS, question_key="Q3",
+                   output_path="work/by_group.csv; work/wide.parquet; work/top.json; work/empty.csv; work/da_chuyen.csv")
+    return led
+
+
+def test_prompt_lists_table_files_and_columns_without_row_values(led):
+    _, fake = run([GOOD], table_ledger(led))
+    prompt = fake.calls[0]["messages"][0]["content"]
+    assert "tables: by_group.csv [group, total]; empty.csv; wide.parquet [a, b]" in prompt
+    assert "BIMAT_DONG" not in prompt and "GIATRI_DONG" not in prompt and "98765" not in prompt
+    assert "top.json" not in prompt and "da_chuyen" not in prompt
+
+
+def test_result_without_table_has_no_tables_part(led):
+    variables, _ = build_variables(led)
+    assert "tables:" not in variables["results"]
+
+
+def test_file_from_failed_attempt_comes_from_run_log(led):
+    # dung ca that bai0a: lan thu 2 ghi bang, lan thu 3 ghi y het nen output_path thieu bang
+    work = led.root / "work"
+    work.mkdir()
+    table = work / "by_brand.csv"
+    table.write_text("brand,n\nA,1\n", encoding="utf-8")
+    led.add_result("Bảng?", "m", {"n": 1}, PASS, question_key="Q3", output_path=None)
+    led.log_event("runner", "R3_Q3", extra={"files_created": [str(table)]})
+    led.log_event("runner", "R1_Q1", extra={"files_created": [str(work / "khac.csv")]})
+    variables, _ = build_variables(led)
+    line = next(x for x in variables["results"].splitlines() if x.startswith("R3 "))
+    assert line.endswith("tables: by_brand.csv [brand, n]")
+
+
+def test_file_in_both_output_path_and_log_listed_once(led):
+    led = table_ledger(led)
+    led.log_event("runner", "R3_Q3", extra={"files_created": [str(led.root / "work" / "by_group.csv")]})
+    variables, _ = build_variables(led)
+    assert variables["results"].count("by_group.csv") == 1
+
+
+def test_columns_are_capped(led, monkeypatch):
+    monkeypatch.setattr(config, "REPORT_TABLE_MAX_COLUMNS", 1)
+    variables, _ = build_variables(table_ledger(led))
+    assert "by_group.csv [group] (+1 more columns)" in variables["results"]
+
+
+def test_cut_results_keep_file_name_and_summary(led):
+    _, shortened = build_variables(table_ledger(led))
+    line = next(x for x in shortened["results"].splitlines() if x.startswith("R3 "))
+    assert 'result_summary: {"n": 1}' in line and "by_group.csv" in line and "[group" not in line
+
+
+def test_prompt_states_table_and_recommendation_rules():
+    text = load_prompt("synthesize")
+    assert "bảng của R2" in text and "Không mô tả quy trình" in text
+    assert "Không đưa khuyến nghị" in text and "việc nên làm" not in text and "chưa trả lời được" in text

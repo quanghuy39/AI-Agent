@@ -260,15 +260,33 @@ Mục 1, pha synthesize (kiểm bằng FakeLLM, CHƯA gọi AI thật):
   - Insight không có `result_ids` được phép (yêu cầu chưa trả lời được), nhãn luôn hypothesis.
   - Khóa `result_summary` chỉ một cấp: `AgentMeta` không cho dict con và hồ sơ thật đều phẳng.
   - Decision "chấp nhận kết luận" dùng kind `assumption`, `source_key` cố định `accept_conclusion|synthesize`.
-- Độ dài prompt (ước lượng, chưa cắt gì, ngân sách 27.000 token): khung 2.110 ký tự ~1.321 token; `bai0a` 3.224 ký tự ~1.649
-  token; `bai2` 9.803 ký tự ~3.584 token. `bai2` lọt ngân sách 4.500 của groq ở lần gọi đầu; lần gửi lại dài hơn vì kèm câu trả
-  lời trước.
+- Độ dài prompt (ước lượng, chưa cắt gì, ngân sách 27.000 token, sau khi thêm `tables`): khung 2.515 ký tự ~1.440 token; `bai0a`
+  4.063 ký tự ~1.895 token; `bai2` 12.070 ký tự ~4.250 token. `bai2` vẫn dưới 4.500 của groq ở lần gọi đầu; lần gửi lại dài hơn
+  vì kèm câu trả lời trước.
 
 Sửa sau lần làm đầu của mục 1:
 - Định dạng số: |x| >= 1 tối đa `REPORT_MAX_DECIMALS` chữ số thập phân; 0 < |x| < 1 theo `REPORT_SIG_DIGITS` chữ số có
   nghĩa, để `bai2` R7 in 0,0513 và 0,0519 thay vì đều là 0,05.
 - Nhãn verified xét cả chuỗi `depends_on` bắc cầu: kết quả phụ thuộc thiếu, không valid hoặc có check chưa pass thì thành
   hypothesis.
+
+Sửa sau lần chạy thật `bai0a` (AI chỉ thấy result_summary nên yêu cầu trả lời bằng bảng bị viết chung chung):
+- `synthesize.md` thêm 2 quy tắc: yêu cầu trả lời bằng bảng thì chỉ rõ "bảng của R..", không khuyến nghị khi không có căn cứ.
+  Bỏ cụm "việc nên làm" ở mô tả `conclusion` vì mâu thuẫn với quy tắc sau.
+- Prompt có `tables` cho từng kết quả: tên file .csv/.parquet và tên cột, chỉ đọc phần đầu file, không có giá trị dòng.
+- Danh sách file lấy từ `output_path` CỘNG `files_created` của mọi lần thử cùng bước trong `run_log`. Lý do: R2 `bai0a` có
+  `output_path` chỉ là `work/top_category.json`; lần thử 2 đã ghi `category_brand_product_count.csv`, lần thử 3 ghi y hệt nên
+  runner không liệt kê. File không có trên đĩa (đã chuyển đi khi `--restart`) thì bỏ.
+- `python main.py <bài> --resynthesize`: chỉ chạy lại pha synthesize, state phải là synthesize hoặc done; pha sớm hơn từ
+  chối, mã 3. `Ledger.supersede_decisions(source_key=...)` chỉ đổi decision chấp nhận kết luận.
+- Điểm dừng "Chấp nhận danh sách câu hỏi nhỏ": thêm `s` gõ góp ý, tối đa `ANALYSIS_PLAN_MAX_RETRIES` lần. `plan.md` không
+  đổi: góp ý vào `user_corrections` nên đi qua `confirmed_understanding`, tính vào trần `CONTEXT_CORRECTIONS_*`, buộc thêm
+  cả bước giải. Câu hỏi của kế hoạch cũ gửi kèm một lần để AI biết góp ý nói về gì.
+- `state.json` thêm `replaced_plan`, `plan` về null ngay khi có góp ý, nên ngắt giữa chừng rồi chạy lại vẫn lập kế hoạch mới.
+  Decision do kế hoạch cũ sinh mà kế hoạch mới không sinh y hệt thì superseded; decision giữ nguyên không hỏi lại.
+- `tests/grade_bai0a.py` mục 3: bỏ tên nhóm khỏi danh sách trước khi so mã. `bai0a` không có CSV tổng theo nhóm nên `agent_cat`
+  rỗng, phép lọc cũ không bỏ được tên. Vẫn so bằng trên tập mã, thừa mã là RỚT.
+- Chưa chạy lại `bai0a` thật sau các sửa này (không gọi AI thật). Quy tắc prompt không có phép kiểm bằng code.
 
 Giới hạn của mục 1:
 - Đồng bộ R2 không xóa: `insights.json` cũ trên R2 còn đó tới khi có bản mới ghi đè.
@@ -311,6 +329,8 @@ Giới hạn của mục 1:
   sinh ra từ báo sai): chạy thật phải dùng `python main.py bai0a --restart`.
 
 ## Backlog
+- `output_path` của kết quả thiếu file do lần thử hỏng đã ghi y hệt; pha synthesize đã bù bằng `run_log`, nhưng
+  `tests.grade` và các nơi đọc `output_path` khác vẫn thấy thiếu.
 - `validate_synthesis` không chặn được số viết bằng chữ.
 - `validate_synthesis` không chặn `Q<số>` dùng với nghĩa quý: dạng đó trùng mã định danh của câu hỏi.
 - `data_profile.json` chứa dòng mẫu thô, kể cả cột che, và được đồng bộ lên `output/` của bucket: cần bỏ trước khi dùng dữ
@@ -326,8 +346,7 @@ Giới hạn của mục 1:
 - Che giá trị chỉ thay chuỗi khớp nguyên văn (giá trị >= 4 ký tự); reason của check custom lấy nguyên từ meta.
 - Cache input có thể cũ nếu R2 lỗi kết nối (có cảnh báo `R2_UNREACHABLE`).
 - Runner và grader của bộ kiểm định không phải sandbox thật (quét tĩnh lách được bằng ghép chuỗi lúc chạy).
-- `--restart` có thể ra lại đúng kế hoạch cũ: prompt plan không đổi thì trúng cache của `ask_model`; từ chối danh sách
-  câu hỏi nhỏ chưa có chỗ góp ý.
+- `--restart` có thể ra lại đúng kế hoạch cũ: prompt plan không đổi thì trúng cache của `ask_model`.
 - Cờ mới xuất hiện sau khi kế hoạch đã được chấp nhận (profiling lại khi đang ở pha loop) chưa được đăng ký thành decision;
   chỉ đăng ký ở pha plan.
 - Báo cáo cũ gắn `source_key` theo ngưỡng mặc định vì báo cáo không lưu ngưỡng đã dùng (`--set` lúc profiling).

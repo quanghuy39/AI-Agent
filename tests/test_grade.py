@@ -9,6 +9,7 @@ import pytest
 
 from storage import r2
 from tests import grade as grader
+from tests import grade_bai0a
 from tests import grade_bai1
 
 ANSWER = "## Kết quả\nDoanh thu tổng: 1234\n\n## Câu agent phải hỏi\n- Kỳ dữ liệu nào được dùng?\n"
@@ -96,3 +97,39 @@ def test_grade_bai1_keeps_working(monkeypatch):
     monkeypatch.setattr(grade_bai1, "grade", lambda task: seen.append(task) or 0)
     assert grade_bai1.main() == 0
     assert seen == ["bai1"]
+
+
+# grade_bai0a muc 3: y "nhom nhieu san pham nhat"
+NOTE = "Nhóm nhiều sản phẩm nhất là CAT001 với 36 sản phẩm"
+
+
+def judge(summary, agent_cat=None):
+    return grade_bai0a.judge_note(NOTE, agent_cat or {}, summary, [], True)[0]
+
+
+TOP = {"top_category_id": "CAT001", "top_category_name": "Beverages (Coffee/Malt)", "top_category_product_count": 36}
+
+
+def test_bai0a_top_group_passes_when_agent_list_has_name_and_code():
+    assert judge(TOP) == "ĐẠT"  # bai0a that: khong co CSV tong theo nhom nen agent_cat rong
+
+
+def test_bai0a_top_group_fails_on_wrong_number():
+    assert judge({**TOP, "top_category_product_count": 35}) == "RỚT"
+
+
+def test_bai0a_top_group_fails_on_wrong_code():
+    assert judge({**TOP, "top_category_id": "CAT002"}) == "RỚT"
+
+
+def test_bai0a_top_group_fails_when_agent_lists_extra_code():
+    assert judge({**TOP, "top_category_id": "CAT001, CAT002"}) == "RỚT"
+
+
+def test_bai0a_top_group_fails_without_code():
+    assert judge({"top_category_name": "Beverages (Coffee/Malt)", "top_category_product_count": 36}) == "RỚT"
+
+
+def test_bai0a_other_note_kinds_unchanged():
+    assert grade_bai0a.judge_note("CAT002 có 7 sản phẩm", {"CAT002": 8}, {}, [], True)[0] == "RỚT"
+    assert grade_bai0a.judge_note("CAT002 có 7 sản phẩm", {"CAT002": 7}, {}, [], True)[0] == "ĐẠT"

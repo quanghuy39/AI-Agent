@@ -50,6 +50,8 @@ ACCEPT_FLAGS_KEY = "accept_flags|"  # decision "chap nhan R.. du co co", sinh sa
 EDIT_PROMPT = "  Nội dung mới: "
 CORRECTION_PROMPT = "Gõ chỉnh sửa (để trống để dừng): "
 FOLLOW_UP_PROMPTS = (EDIT_PROMPT, CORRECTION_PROMPT)  # go tiep sau mot cau tra loi, khong phai diem dung moi
+PLAN_QUESTION = "Chấp nhận danh sách câu hỏi nhỏ của kế hoạch?"
+PLAN_CORRECTION_PREFIX = "Góp ý kế hoạch: "  # phan biet voi chinh sua cach hieu de trong user_corrections
 
 
 class StopLoop(Exception):
@@ -419,8 +421,18 @@ def _summary_cut(ctx):
     return context_builder.summary_shrinker(ctx.report, ctx.sensitive)
 
 
+def _rejected_plan(ctx):
+    """Cau hoi cua ke hoach bi gop y, de AI biet gop y noi ve cai gi. Di qua phan du lieu cua prompt."""
+    state = ctx.ledger.get_state()
+    old = state.replaced_plan if state else None
+    if not old:
+        return ""
+    lines = [f"- {q['key']}: {q['question']}" for q in old["sub_questions"]]
+    return "\n" + "\n".join(["Previous plan, to revise as the user corrections say:", *lines])
+
+
 def make_plan(ctx):
-    text = _build_prompt(ctx, "plan", {"confirmed_understanding": _confirmed_understanding(ctx)},
+    text = _build_prompt(ctx, "plan", {"confirmed_understanding": _confirmed_understanding(ctx) + _rejected_plan(ctx)},
                          {"confirmed_understanding": _confirmed_understanding(ctx, short=True),
                           context_builder.SUMMARY: _summary_cut(ctx)})
     plan = _call(ctx, text, AnalysisPlan)
@@ -459,40 +471,100 @@ def check_plan(ctx, plan):
         raise StopLoop(str(e)) from None
 
 
-def register_plan_decisions(ctx, plan):
-    """Ghi pending (chua hoi): gia dinh, khoang hop le, co muc flag. De xuat cua AI cho dung mot co (flag_key) nam
-    trong decision cua co do, khong thanh decision rieng. Chay lai khong tao trung."""
+def _plan_items(ctx, plan):
+    """[(kind, text, required, source_key)] ke hoach sinh ra: gia dinh, khoang hop le, co muc flag. De xuat cua AI cho
+    dung mot co (flag_key) nam trong decision cua co do, khong thanh decision rieng."""
     flagged = [f for f in fl.all_flags(ctx.report) if f["severity"] == fl.FLAG]
     keys = {f["source_key"] for f in flagged}
     proposals = {}
     for a in plan.assumptions:
         if a.kind == "anomaly_handling" and a.flag_key in keys:
             proposals.setdefault(a.flag_key, a)
+    items = []
     for a in plan.assumptions:
         if proposals.get(a.flag_key) is not a:
-            _add_pending(ctx, a.kind, a.text, a.required, _text_key(a.kind, a.text))
+            items.append((a.kind, a.text, a.required, _text_key(a.kind, a.text)))
     for r in plan.proposed_ranges:
         text = f"Khoảng hợp lệ của {r.column}: {_fmt_bounds(r)} ({r.reason})"
-        _add_pending(ctx, "assumption", text, True, _text_key("assumption", text))
+        items.append(("assumption", text, True, _text_key("assumption", text)))
     for f in flagged:
         proposal = proposals.get(f["source_key"])
-        _add_pending(ctx, "anomaly_handling", f"{f['message']} → Xử lý: {proposal.text if proposal else NO_HANDLING}",
-                     True, f["source_key"])
+        items.append(("anomaly_handling", f"{f['message']} → Xử lý: {proposal.text if proposal else NO_HANDLING}",
+                      True, f["source_key"]))
+    return items
+
+
+def register_plan_decisions(ctx, plan):
+    """Ghi pending (chua hoi) moi decision cua ke hoach. Chay lai khong tao trung."""
+    for kind, text, required, key in _plan_items(ctx, plan):
+        _add_pending(ctx, kind, text, required, key)
     if _info_flags(ctx) and not _has_anomaly_decision(ctx):  # diem dung nay luon dung khi co luu y
         _add_pending(ctx, "anomaly_handling", KEEP_DATA_TEXT, True, KEEP_DATA_KEY)
 
 
+def _drop_replaced_decisions(ctx, old, new):
+    """Decision do ke hoach cu sinh ma ke hoach moi khong sinh y het thi superseded. So noi dung ke hoach sinh ra,
+    khong so d.text, nen decision nguoi dung da sua van giu khi ke hoach moi khong doi muc do."""
+    current = {key: text for _, text, _, key in _plan_items(ctx, new)}
+    for _, text, _, key in _plan_items(ctx, old):
+        if current.get(key) != text:
+            ctx.ledger.supersede_decisions(key)
+    ctx.decisions = [_decision_line(x) for x in ctx.ledger.decisions() if x.status == DecisionStatus.CONFIRMED]
+
+
+def load_plan(ctx):
+    """Ke hoach trong state; chua co thi lap, luu truoc khi hoi. Dang lap lai theo gop y thi bo decision cua ke hoach cu."""
+    state = ctx.ledger.get_state()
+    if state.plan is not None:
+        return AnalysisPlan.model_validate(state.plan)
+    plan = make_plan(ctx)
+    check_plan(ctx, plan)
+    if state.replaced_plan:
+        _drop_replaced_decisions(ctx, AnalysisPlan.model_validate(state.replaced_plan), plan)
+    ctx.ledger.update_state(plan=plan.model_dump(mode="json"), replaced_plan=None)
+    return plan
+
+
+def _save_plan_correction(ctx, text):
+    """Luu gop y vao user_corrections cua problem.json (di theo _confirmed_understanding, tinh vao tran hien co) va bo
+    ke hoach trong state: ngat giua chung roi chay lai van lap ke hoach moi."""
+    record = ctx.ledger.get_problem() or {}
+    corrections = [*(record.get("user_corrections") or []), f"{PLAN_CORRECTION_PREFIX}{text}"]
+    ctx.ledger.set_problem({**record, "user_corrections": corrections})
+    ctx.ledger.update_state(plan=None, replaced_plan=ctx.ledger.get_state().plan)
+
+
+def _plan_answer(yes, ask_user):
+    """Tra ve "y", "n" hoac noi dung gop y. Tra loi khac y, s tinh la n; gop y de trong cung la n."""
+    if yes:
+        print(f"{PLAN_QUESTION} [y/s/n] y (--yes)")
+        return "y"
+    answer = ask_user(f"{PLAN_QUESTION} [y = chấp nhận, s = gõ góp ý, n = dừng] ").strip().lower()
+    if answer in YES:
+        return "y"
+    return (ask_user(CORRECTION_PROMPT).strip() or "n") if answer == "s" else "n"
+
+
 def accept_plan(ctx, plan, yes, ask_user):
-    """Hoi cac decision con pending, roi danh sach cau hoi nho. Chay lai chi hoi phan chua xong."""
-    register_plan_decisions(ctx, plan)
-    print_plan(plan)
-    review_decisions(ctx, yes, ask_user, PLAN_OPEN_ITEM, show_info=True)
-    if not confirm("Chấp nhận danh sách câu hỏi nhỏ của kế hoạch?", yes, ask_user):
-        ctx.ledger.add_open_item_once(PLAN_OPEN_ITEM)
-        ctx.ledger.log_event("analysis", "confirm_plan", status="rejected")
-        raise StopLoop("Người dùng không chấp nhận kế hoạch.")
-    require_confirmed(ctx)
-    ctx.ledger.log_event("analysis", "confirm_plan", extra={"n_decisions": len(ctx.decisions)})
+    """Hoi cac decision con pending, roi danh sach cau hoi nho. Chay lai chi hoi phan chua xong. Tra loi s: gop y gui
+    lai AI lap ke hoach moi, toi da ANALYSIS_PLAN_MAX_RETRIES lan."""
+    for attempt in range(config.ANALYSIS_PLAN_MAX_RETRIES + 1):
+        register_plan_decisions(ctx, plan)
+        print_plan(plan)
+        review_decisions(ctx, yes, ask_user, PLAN_OPEN_ITEM, show_info=True)
+        answer = _plan_answer(yes, ask_user)
+        if answer == "y":
+            require_confirmed(ctx)
+            ctx.ledger.log_event("analysis", "confirm_plan", extra={"n_decisions": len(ctx.decisions)})
+            return
+        if answer == "n" or attempt == config.ANALYSIS_PLAN_MAX_RETRIES:
+            break
+        _save_plan_correction(ctx, answer)
+        ctx.ledger.log_event("analysis", "confirm_plan", status="correction", extra={"attempt": attempt + 1})
+        plan = load_plan(ctx)
+    ctx.ledger.add_open_item_once(PLAN_OPEN_ITEM)
+    ctx.ledger.log_event("analysis", "confirm_plan", status="rejected")
+    raise StopLoop("Người dùng không chấp nhận kế hoạch.")
 
 
 def topo_order(sub_questions):

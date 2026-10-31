@@ -24,6 +24,7 @@ from skills.report.schemas import SynthesisOutput
 from storage import r2
 
 TASK = "bai0a"
+SPEC_NAME = "PRODUCT.product_id"
 IDS = [f"P{i:04d}" for i in range(1, 7)]
 FILES = {
     f"input/{TASK}/de_bai.md": "Đếm số sản phẩm, rồi tính tổng giá. Sản phẩm P0001 là mẫu.",
@@ -233,6 +234,118 @@ def test_unfinished_question_restarts_from_first_attempt(env):
     assert code == loop.DONE and "Code lỗi" not in prompts(fake)[0]  # khong mang loi lan truoc sang
 
 
+# gop y ke hoach (s)
+PLAN2 = {**PLAN, "understanding": "KEHOACH2: chỉ tính hàng thật.",
+         "assumptions": [{"kind": "metric_definition", "text": "Tổng giá = cộng price hàng thật", "required": True}]}
+FEEDBACK = "Bỏ sản phẩm mẫu"
+
+
+def on_plan(*plan_answers):
+    """Tra loi lan luot o cau hoi chap nhan ke hoach; cau khac y; o cau go gop y tra FEEDBACK."""
+    queue = list(plan_answers)
+
+    def ask(question):
+        if "danh sách câu hỏi nhỏ" in question:
+            return queue.pop(0)
+        return FEEDBACK if question == loop.CORRECTION_PROMPT else "y"
+    return ask
+
+
+def test_plan_feedback_goes_to_ai_and_replaces_plan(env):
+    code, fake = run([RESTATEMENT, PLAN, PLAN2, STEP1, STEP2], yes=False, ask_user=on_plan("s", "y"))
+    assert code == loop.DONE
+    assert schemas(fake) == ["ProblemRestatement", "AnalysisPlan", "AnalysisPlan", "AnalysisStep", "AnalysisStep"]
+    replan = prompts(fake)[2]
+    assert f"{loop.PLAN_CORRECTION_PREFIX}{FEEDBACK}" in replan
+    assert "Previous plan, to revise" in replan and "- Q1: Có bao nhiêu sản phẩm?" in replan
+    assert env.get_problem()["user_corrections"] == [f"{loop.PLAN_CORRECTION_PREFIX}{FEEDBACK}"]
+    state = env.get_state()
+    assert state.plan["understanding"] == PLAN2["understanding"] and state.replaced_plan is None
+    assert FEEDBACK in prompts(fake)[3]  # buoc giai cung thay gop y
+    assert all("Previous plan" not in p for p in prompts(fake)[3:])
+    assert [e.status for e in env.read_log() if e.action == "confirm_plan"] == ["correction", "ok"]
+
+
+def test_plan_feedback_supersedes_decision_of_old_plan(env):
+    code, fake = run([RESTATEMENT, PLAN, PLAN2, STEP1, STEP2], yes=False, ask_user=on_plan("s", "y"))
+    status = {d.text: d.status.value for d in env.decisions()}
+    assert code == loop.DONE and status["Tổng giá = cộng cột price"] == "superseded"
+    assert status["Tổng giá = cộng price hàng thật"] == "confirmed"
+    assert "Tổng giá = cộng cột price" not in prompts(fake)[3]
+
+
+def test_plan_feedback_keeps_decision_new_plan_still_has_without_asking_again(env):
+    asked = []
+    plan_q = on_plan("s", "y")
+
+    def ask(question):
+        asked.append(question)
+        return plan_q(question)
+
+    code, _ = run([RESTATEMENT, PLAN, PLAN, STEP1, STEP2], yes=False, ask_user=ask)
+    assert code == loop.DONE and sum("y = đồng ý" in q for q in asked) == 1
+    assert [d.status.value for d in env.decisions() if d.source_key != app.CONCLUSION_KEY] == ["confirmed"]
+
+
+def test_plan_feedback_interrupted_rerun_makes_new_plan(env):
+    code, _ = run([RESTATEMENT, PLAN, LLMChainExhausted("hết")], yes=False, ask_user=on_plan("s"))
+    state = env.get_state()
+    assert code == loop.EXHAUSTED and state.phase == Phase.PLAN and state.plan is None and state.replaced_plan
+    code, fake = run([PLAN2, STEP1, STEP2])
+    assert code == loop.DONE and FEEDBACK in prompts(fake)[0] and "Previous plan" in prompts(fake)[0]
+    status = {d.text: d.status.value for d in env.decisions()}
+    assert status["Tổng giá = cộng cột price"] == "superseded"
+
+
+@pytest.mark.parametrize("answer", ["n", "khác", ""])
+def test_plan_answer_other_than_y_s_stops_as_before(env, answer):
+    code, fake = run([RESTATEMENT, PLAN], yes=False, ask_user=on_plan(answer))
+    assert code == loop.STOPPED and len(fake.calls) == 2 and env.get_state().plan is not None
+    assert [o.text for o in env.open_items()] == [loop.PLAN_OPEN_ITEM]
+
+
+def test_plan_empty_feedback_stops_without_calling_ai(env):
+    ask = on_plan("s")
+
+    def empty(question):
+        return "  " if question == loop.CORRECTION_PROMPT else ask(question)
+
+    code, fake = run([RESTATEMENT, PLAN], yes=False, ask_user=empty)
+    assert code == loop.STOPPED and len(fake.calls) == 2 and env.get_state().plan is not None
+    assert env.get_problem()["user_corrections"] == []
+
+
+def test_plan_feedback_gives_up_after_max_retries(env):
+    tries = loop.config.ANALYSIS_PLAN_MAX_RETRIES
+    code, fake = run([RESTATEMENT] + [PLAN] * (tries + 1), yes=False, ask_user=on_plan(*["s"] * (tries + 1)))
+    assert code == loop.STOPPED and schemas(fake).count("AnalysisPlan") == tries + 1
+    assert len(env.get_problem()["user_corrections"]) == tries
+    assert [o.text for o in env.open_items()] == [loop.PLAN_OPEN_ITEM]
+
+
+def test_plan_question_offers_s_and_yes_skips_it(env, capsys):
+    asked = []
+    ask = on_plan("y")
+    run(FULL, yes=False, ask_user=lambda q: asked.append(q) or ask(q))
+    assert any("s = gõ góp ý" in q for q in asked)
+    assert run(FULL, restart=True)[0] == loop.DONE and "[y/s/n] y (--yes)" in capsys.readouterr().out
+
+
+def test_plan_feedback_stays_within_corrections_cap(env):
+    long_text = "x" * (loop.config.CONTEXT_CORRECTIONS_MAX_CHARS * 2)
+    ask = on_plan("s", "y")
+    code, fake = run([RESTATEMENT, PLAN, PLAN, STEP1, STEP2], yes=False,
+                     ask_user=lambda q: long_text if q == loop.CORRECTION_PROMPT else ask(q))
+    assert code == loop.DONE and long_text not in prompts(fake)[2]
+    assert "x" * (loop.config.CONTEXT_CORRECTIONS_MAX_CHARS - 40) in prompts(fake)[2]
+    assert env.get_problem()["user_corrections"][0].endswith(long_text)  # ho so giu du
+
+
+def test_plan_template_has_no_feedback_text():
+    from skills.analysis import load_prompt
+    assert "Previous plan" not in load_prompt("plan") and "Góp ý" not in load_prompt("plan")
+
+
 # pha hieu de
 def answers(*items):
     it = iter(items)
@@ -364,6 +477,95 @@ def test_synthesis_prompt_masks_sensitive(env):
     report = [c for c in fake.all_calls if c["role"] == "report"]
     assert code == loop.DONE and len(report) == 1 and "[đã che]" in report[0]["messages"][0]["content"]
     assert not any(p in report[0]["messages"][0]["content"] for p in IDS)
+
+
+def test_table_from_failed_attempt_reaches_synthesis_prompt(env):
+    half = step("q1")
+    half["can_be_wrong_if"] = ["ý 1", "ý 2"]  # thieu check custom -> lan 1 chua dat, file da ve work/
+    code, fake = run([RESTATEMENT, PLAN, half, STEP1, STEP2])
+    assert code == loop.DONE and "q1.csv" not in (env.get_result("R1").output_path or "")
+    prompt = [c for c in fake.all_calls if c["role"] == "report"][0]["messages"][0]["content"]
+    assert "tables: q1.csv [product_id, price]" in prompt and "P0001" not in prompt.split("# Results")[1]
+
+
+# --resynthesize
+def done_snapshot(env):
+    keep = [d for d in env.decisions() if d.source_key != app.CONCLUSION_KEY]
+    return env.results(), keep, env.get_state().plan
+
+
+def test_resynthesize_after_done_only_redoes_synthesis(env, capsys):
+    run(FULL)
+    before, old = done_snapshot(env), env.get_insights()
+    asked = []
+    code, fake = run([], yes=False, ask_user=lambda q: asked.append(q) or "y", resynthesize=True)
+    assert code == loop.DONE and fake.calls == [] and n_report_calls(fake) == 1
+    assert asked == ["Chấp nhận kết luận? [y/n] "]
+    assert done_snapshot(env) == before and env.get_state().phase == Phase.DONE
+    assert env.get_insights()["created_at"] and env.get_insights()["insights"] == old["insights"]
+    assert len(list((env.root / "_superseded").glob("insights_*.json"))) == 1
+    assert [d.status.value for d in env.decisions() if d.source_key == app.CONCLUSION_KEY] == ["superseded", "confirmed"]
+    assert synthesis_events(env, "resynthesize")[-1].extra["superseded_insights"].startswith("_superseded/")
+    assert "Tổng hợp lại" in capsys.readouterr().out
+
+
+def test_resynthesize_old_conclusion_decision_not_sent_to_ai(env):
+    run(FULL)
+    _, fake = run([], resynthesize=True)
+    prompt = [c for c in fake.all_calls if c["role"] == "report"][0]["messages"][0]["content"]
+    assert app.CONCLUSION_TEXT not in prompt
+
+
+def test_resynthesize_reject_stays_in_synthesize(env):
+    run(FULL)
+    code, _ = run([], yes=False, ask_user=say_no_to("kết luận"), resynthesize=True)
+    assert code == loop.STOPPED and env.get_state().phase == Phase.SYNTHESIZE and env.get_insights() is None
+    assert [d.status.value for d in conclusion(env)] == ["pending"]
+    code, _ = run([])
+    assert code == loop.DONE and [d.status.value for d in conclusion(env)] == ["confirmed"]
+
+
+def test_resynthesize_from_synthesize_phase(env):
+    code, _ = run(FULL, yes=False, ask_user=say_no_to("kết luận"))
+    assert code == loop.STOPPED
+    code, fake = run([], resynthesize=True)
+    assert code == loop.DONE and n_report_calls(fake) == 1
+    assert [d.status.value for d in env.decisions() if d.source_key == app.CONCLUSION_KEY] == ["superseded", "confirmed"]
+
+
+def test_resynthesize_when_insights_missing_still_runs(env):
+    run(FULL)
+    (env.root / "insights.json").unlink()  # ho so tao truoc khi co pha tong hop
+    code, fake = run([], resynthesize=True)
+    assert code == loop.DONE and n_report_calls(fake) == 1 and env.get_insights() is not None
+
+
+def test_resynthesize_refused_before_synthesize(env, capsys):
+    run([RESTATEMENT, PLAN, LLMChainExhausted("hết")])
+    before = env.get_state()
+    code, fake = run([], resynthesize=True)
+    out = capsys.readouterr().out
+    assert code == loop.STOPPED and fake.all_calls == [] and env.get_state() == before
+    assert "--resynthesize chỉ dùng khi" in out and "đang ở pha loop" in out
+
+
+def test_resynthesize_refused_without_state(env, capsys):
+    code, fake = run([], resynthesize=True)
+    assert code == loop.STOPPED and fake.all_calls == [] and env.get_state() is None
+    assert "chưa có tiến độ" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("extra", [["--restart"], ["--sensitive", SPEC_NAME]])
+def test_cli_resynthesize_rejects_other_options(env, extra):
+    with pytest.raises(SystemExit):
+        app.main([TASK, "--fake", "--yes", "--resynthesize", *extra])
+
+
+def test_cli_resynthesize_fake(env):
+    assert app.main([TASK, "--fake", "--yes"]) == loop.DONE
+    assert app.main([TASK, "--fake", "--yes", "--resynthesize"]) == loop.DONE
+    led = fake_ledger(env)
+    assert len(led.results()) == 1 and led.get_state().phase == Phase.DONE and led.get_insights() is not None
 
 
 def test_fake_cli_reaches_done_with_insights(env):

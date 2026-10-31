@@ -256,3 +256,12 @@ def test_render_markdown(led, tmp_path):
 def test_render_markdown_empty(led):
     md = led.render_markdown()
     assert "## Kết quả" in md and "_Chưa có._" in md and "## Đề bài" not in md
+
+
+def test_supersede_decisions_by_source_key_only_touches_that_key(tmp_path):
+    led = Ledger(tmp_path)
+    a = led.add_decision("assumption", "giữ", source_key="khac")
+    b = led.add_decision("assumption", "bỏ", source_key="k")
+    assert led.supersede_decisions("k") == [b.id]
+    assert [d.status.value for d in led.decisions()] == ["pending", "superseded"] and a.id == "D1"
+    assert led.supersede_decisions() == [a.id]

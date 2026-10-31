@@ -103,6 +103,7 @@ CAUTION_DEFAULT = "chuan"            # muc than trong duy nhat dang ho tro
 SYNC_MANIFEST_DIR = "sync_manifest"  # trong cache/: manifest dong bo ho so len R2, moi bai mot file
 ANALYSIS_MAX_RETRIES = 3             # so lan goi lai AI cho moi cau hoi sau lan dau
 ANALYSIS_UNDERSTAND_MAX_RETRIES = 3  # so lan goi lai AI dien giai de sau lan dau, khi nguoi dung gop y
+ANALYSIS_PLAN_MAX_RETRIES = 3        # so lan lap lai ke hoach sau lan dau, khi nguoi dung gop y
 ANALYSIS_FEEDBACK_STDERR_CHARS = 1500  # error_feedback chi giu chung nay ky tu cuoi cua stderr
 ANALYSIS_MASK_MIN_CHARS = 4          # gia tri cot che ngan hon thi khong thay (tranh thay nham)
 # Bao ve do dai prompt buoc giai: token ~ ky tu / PROMPT_CHARS_PER_TOKEN + PROMPT_SCHEMA_TOKENS (chi dan schema
@@ -122,6 +123,7 @@ CONTEXT_DECISIONS_MAX = 15           # khi phai cat: so decision giu lai
 # Tong hop (Ngay 7)
 REPORT_SYNTH_MAX_RETRIES = 2         # so lan gui lai AI kem danh sach loi, sau lan dau
 REPORT_FEEDBACK_MAX_ERRORS = 20      # so loi toi da trong moi lan gui lai
+REPORT_TABLE_MAX_COLUMNS = 40        # so ten cot toi da cua moi bang ket qua dua vao prompt
 REPORT_MAX_DECIMALS = 2              # so chu so thap phan toi da khi dien so co |x| >= 1 vao van ban
 REPORT_SIG_DIGITS = 3                # so chu so co nghia khi dien so co 0 < |x| < 1 (ty le nho khong bi lam tron mat)
 REPORT_PERCENT_FIELD_HINTS = ("pct", "percent")  # ten truong chua mot tu nay moi duoc viet % phia sau

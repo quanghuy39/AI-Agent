@@ -376,6 +376,21 @@ def test_report_saved_before_source_key_gets_keys_on_load(env):
     assert f"[key: {DUP_ORDERS}]" in ctx.summary["text"]
 
 
+def test_plan_feedback_asks_flag_again_when_proposal_changes(env):
+    def plan_with(text):
+        return {**SIMPLE_PLAN, "assumptions": [{"kind": "anomaly_handling", "text": text, "flag_key": DUP_ORDERS}]}
+
+    ans = Answers(rules=[("Gõ chỉnh sửa", "Đổi cách xử lý")])
+    replies = iter(["s", "y"])
+    ask = lambda q: next(replies) if "danh sách câu hỏi nhỏ" in q else ans(q)  # noqa: E731
+    code, _ = run([RESTATEMENT, plan_with("Lấy dòng đầu"), plan_with("Lấy dòng cuối"), STEP1, STEP2], task=FLAGGED,
+                  yes=False, ask_user=ask)
+    assert code == loop.DONE
+    versions = [d for d in plan_decisions(flagged_ledger(env)) if d.source_key == DUP_ORDERS]
+    assert [d.status.value for d in versions] == ["superseded", "confirmed"]
+    assert "Lấy dòng cuối" in versions[1].text
+
+
 def test_old_decisions_without_source_key_are_readable(env):
     (env.root / "decisions.json").write_text(json.dumps([{"id": "D1", "kind": "assumption", "text": "cũ"}]),
                                              encoding="utf-8")
