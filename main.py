@@ -29,7 +29,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 import config
 import llm
 from analysis import loop
-from ledger import Ledger, Phase
+from ledger import Ledger, Phase, ReportLocked
 from llm import LLMChainExhausted, LLMError
 from profiling import flags as fl
 from profiling import quality
@@ -148,6 +148,10 @@ def exit_code_for(e, led, ctx=None):
         led.log_event("analysis", "stop", status="sensitive_leak")
         print(f"Dừng: {e}")
         return loop.STOPPED
+    if isinstance(e, ReportLocked):
+        led.log_event("analysis", "stop", status="report_locked")
+        print(e)
+        return loop.STOPPED
     if isinstance(e, LLMError):
         led.log_event("analysis", "stop", status="llm_error", extra={"error_type": type(e).__name__})
         print(f"Lỗi gọi AI ({type(e).__name__}): {e}")
@@ -162,12 +166,12 @@ def exit_code_for(e, led, ctx=None):
 
 def _restart(led, sensitive):
     old = led.get_state()
+    insights = led.discard_insights()  # truoc tien: report/ bi khoa thi chua doi gi
     superseded = led.supersede_valid()
     decisions = led.supersede_decisions()
     led.close_open_items_with_text(loop.PLAN_OPEN_ITEM)
     led.close_open_items_with_text(loop.PENDING_OPEN_ITEM)
     led.close_open_items_with_text(CONCLUSION_OPEN_ITEM)
-    insights = led.discard_insights()
     # khong truyen --sensitive: giu danh sach cu, khong am tham bo che
     led.set_state(Phase.UNDERSTAND, sensitive=None if sensitive or old is None else old.sensitive)
     led.log_event("analysis", "restart", extra={"superseded": superseded, "superseded_decisions": decisions,
@@ -240,6 +244,11 @@ def run_task(task, sensitive=None, max_retries=None, yes=False, ask_user=input, 
     """Chay mot bai tu pha dang do; tra ve ma thoat. sync: dong bo ho so len R2 (CLI bat, goi truc tiep thi tat)."""
     max_retries = config.ANALYSIS_MAX_RETRIES if max_retries is None else max_retries
     led = Ledger(runner.OUTPUT_DIR / task)
+    if restart or resynthesize or build_report:  # kiem truoc moi buoc ghi: bi khoa thi khong doi gi, ke ca run_log
+        locked = led.locked_report_files()
+        if locked:
+            print(ReportLocked(locked))
+            return loop.STOPPED
     led.attach_usage_log()  # moi luot goi AI ghi vao run_log.jsonl
     ctx = code = None
     _warn_options(yes)
@@ -269,7 +278,7 @@ def run_task(task, sensitive=None, max_retries=None, yes=False, ask_user=input, 
         led.log_event("analysis", "done", extra={"results": list(led.results_by_question().values())})
         code = loop.DONE
         return code
-    except (loop.StopLoop, LLMError, SensitiveLeakError, ClientError, BotoCoreError) as e:
+    except (loop.StopLoop, ReportLocked, LLMError, SensitiveLeakError, ClientError, BotoCoreError) as e:
         code = exit_code_for(e, led, ctx)
         return code
     except KeyboardInterrupt:

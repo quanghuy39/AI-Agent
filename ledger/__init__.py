@@ -1,4 +1,4 @@
-from ledger.ledger import Ledger
+from ledger.ledger import Ledger, ReportLocked
 from ledger.schema import (
     Check,
     CheckStatus,

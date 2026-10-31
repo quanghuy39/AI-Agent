@@ -39,6 +39,14 @@ RUN_LOG = "run_log.jsonl"
 STATE = "state.json"
 WORK_DIR = "work"
 SUPERSEDED_DIR = "_superseded"  # trong work/ va o goc ho so: file cua lan lam truoc, khong dua cho AI
+WORD_OWNER_PREFIX = "~$"  # file tam Word tao canh file dang mo
+
+
+class ReportLocked(Exception):
+    """File cua ban bao cao dang bi chuong trinh khac khoa, khong chuyen hay ghi duoc."""
+
+    def __init__(self, names):
+        super().__init__(f"Đóng file {', '.join(names)} (đang mở trong Word) rồi chạy lại")
 
 
 def _id_number(item_id):
@@ -109,21 +117,38 @@ class Ledger:
     def set_insights(self, insights):
         self._write_json(INSIGHTS, insights)
 
+    def locked_report_files(self):
+        """Ten cac file trong report/ dang bi khoa (thu mo ghi, khong doi noi dung). File tam ~$ chi neu khi khong con
+        file nao khac."""
+        report = self.root / REPORT_DIR
+        locked = []
+        for path in sorted(p for p in report.rglob("*") if p.is_file()):
+            try:
+                with open(path, "r+b"):
+                    pass
+            except PermissionError:
+                locked.append(path.name)
+        return [n for n in locked if not n.startswith(WORD_OWNER_PREFIX)] or locked
+
     def discard_insights(self):
         """Chuyen insights.json va thu muc report/ dung tu no sang _superseded/ o goc ho so, khong xoa (ban bi tu choi,
         hoac --restart). Khong dat trong work/ de khong lan voi file cua code AI. Tra ve duong dan moi cua insights.json
-        (tuong doi), khong co file thi None."""
+        (tuong doi), khong co file thi None. Doi ten, khong chep: bi khoa thi ReportLocked, khong de lai ban do dang."""
         path = self._path(INSIGHTS)
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         report = self.root / REPORT_DIR
-        if report.is_dir():
-            (self.root / SUPERSEDED_DIR).mkdir(exist_ok=True)
-            shutil.move(report, self.root / SUPERSEDED_DIR / f"report_{stamp}")
-        if not path.exists():
-            return None
-        target = self.root / SUPERSEDED_DIR / f"insights_{stamp}.json"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(path, target)
+        superseded = self.root / SUPERSEDED_DIR
+        target = superseded / f"insights_{stamp}.json"
+        try:
+            if report.is_dir():
+                superseded.mkdir(exist_ok=True)
+                report.rename(superseded / f"report_{stamp}")
+            if not path.exists():
+                return None
+            superseded.mkdir(exist_ok=True)
+            path.rename(target)
+        except PermissionError:
+            raise ReportLocked(self.locked_report_files() or [REPORT_DIR if report.exists() else INSIGHTS]) from None
         moved = target.relative_to(self.root).as_posix()
         self.log_event("ledger", "discard_insights", extra={"moved_to": moved})
         return moved

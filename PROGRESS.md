@@ -330,6 +330,9 @@ Sau lần chạy thật `bai0a` (số liệu đúng, đã xem Word):
 - `validate_synthesis`: conclusion giống summary trên 80% thì gửi lại AI. Câu "Không có hạn chế đáng kể..." được phép có chữ số
   vì trùng nguyên văn `config.REPORT_NO_LIMITATIONS`.
 - Quy tắc tránh từ đánh giá mức độ chỉ nằm trong prompt, không có phép kiểm bằng code.
+- `--restart`, `--resynthesize`, `--build-report` thử mở ghi từng file trong `report/` trước mọi thao tác ghi; có file bị khóa thì
+  dừng, mã 3, không đổi gì. `discard_insights` đổi tên thay vì `shutil.move` (move chép rồi mới xóa, để lại bản sao dở dang) và
+  chuyển `PermissionError` thành `ReportLocked`.
 
 ## Quyết định đã chốt
 - Prompt analysis trong `skills/analysis/` là nguồn duy nhất cho cả bộ kiểm định lẫn agent: kiểm định đo đúng

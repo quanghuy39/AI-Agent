@@ -80,6 +80,8 @@ lập lại, tối đa `ANALYSIS_PLAN_MAX_RETRIES` lần; decision kế hoạch 
 decision khác giữ nguyên; pha sớm hơn thì từ chối, mã 3; không dùng cùng `--restart`, `--sensitive`.
 Báo cáo dựng sau khi chấp nhận kết luận, ở `output/<bài>/report/`: `bao_cao_<bài>.docx`, `ho_so_<bài>.md`, `slides_outline.json`,
 `charts/<insight>.png`; lỗi dựng báo cáo không đổi state done, sửa rồi `--build-report`. `REPORT_AUTHOR` trong `.env` là tùy chọn.
+`--restart`, `--resynthesize`, `--build-report`: file trong `report/` đang bị khóa (mở trong Word) thì dừng trước mọi thao tác ghi,
+mã 3, không đổi gì, kể cả run_log.
 Đồng bộ R2 (trừ `--fake`, `--no-sync`): trước mỗi câu hỏi xác nhận, khi xong và khi thoát vì lỗi; lỗi đồng bộ chỉ cảnh
 báo một dòng, ghi sự kiện `sync` trong run_log, lần sau tải lại nhờ manifest. `run_task` gọi trực tiếp thì mặc định tắt.
 Lọc output tiếng Việt bằng `Select-String` cần `[Console]::OutputEncoding = [Text.Encoding]::UTF8`.

@@ -4,9 +4,11 @@ Runner chay that (code ngan) tren ban chep du lieu gia.
 Chay: python -m pytest tests/test_orchestrator.py -v
 """
 
+import ctypes
 import json
 import runpy
 import sys
+from contextlib import contextmanager
 from datetime import datetime
 
 import pytest
@@ -15,7 +17,7 @@ from botocore.exceptions import EndpointConnectionError
 import llm
 import main as app
 from analysis import loop
-from ledger import Ledger, Phase
+from ledger import Ledger, Phase, ReportLocked
 from llm import LLMChainExhausted
 from profiling import quality
 from profiling.data_summary import SensitiveLeakError
@@ -661,6 +663,105 @@ def test_restart_and_resynthesize_move_old_report(env):
     assert len(list((env.root / "_superseded").glob("report_*"))) == 1 and docx_path(env).is_file()
     run([LLMChainExhausted("hết")], restart=True)
     assert not (env.root / "report").exists() and len(list((env.root / "_superseded").glob("report_*"))) == 2
+
+
+# report/ dang mo trong Word
+windows_only = pytest.mark.skipif(sys.platform != "win32", reason="khoa file kieu Windows")
+
+
+@contextmanager
+def opened_in_word(path):
+    """Giu file nhu Word: co quyen ghi, chi cho chuong trinh khac doc."""
+    kernel = ctypes.windll.kernel32
+    kernel.CreateFileW.restype = ctypes.c_void_p
+    kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_uint32,
+                                   ctypes.c_uint32, ctypes.c_void_p]
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    handle = kernel.CreateFileW(str(path), 0xC0000000, 1, None, 3, 0, None)  # doc + ghi, FILE_SHARE_READ, OPEN_EXISTING
+    assert handle != ctypes.c_void_p(-1).value
+    try:
+        yield
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def tree(led):
+    return {p.relative_to(led.root).as_posix(): p.read_bytes() for p in led.root.rglob("*") if p.is_file()}
+
+
+LOCK_MESSAGE = f"Đóng file bao_cao_{TASK}.docx (đang mở trong Word) rồi chạy lại"
+
+
+@windows_only
+@pytest.mark.parametrize("flag", ["restart", "resynthesize", "build_report"])
+def test_locked_report_stops_and_changes_nothing(env, capsys, flag):
+    run(FULL)
+    capsys.readouterr()
+    with opened_in_word(docx_path(env)):
+        before = tree(env)
+        code, fake = run([], **{flag: True})
+        assert tree(env) == before
+    assert code == loop.STOPPED and fake.calls == [] and capsys.readouterr().out.strip().endswith(LOCK_MESSAGE)
+
+
+@windows_only
+def test_locked_report_runs_after_closing(env):
+    run(FULL)
+    with opened_in_word(docx_path(env)):
+        assert run([], build_report=True)[0] == loop.STOPPED
+    assert run([], build_report=True)[0] == loop.DONE
+
+
+@windows_only
+def test_word_owner_file_not_named_beside_document(env):
+    run(FULL)
+    owner = docx_path(env).with_name("~$o_cao.docx")
+    owner.write_bytes(b"owner")
+    with opened_in_word(docx_path(env)), opened_in_word(owner):
+        assert env.locked_report_files() == [docx_path(env).name]
+
+
+@windows_only
+def test_only_owner_file_locked_still_named(env):
+    run(FULL)
+    owner = docx_path(env).with_name("~$o_cao.docx")
+    owner.write_bytes(b"owner")
+    with opened_in_word(owner):
+        assert env.locked_report_files() == [owner.name]
+
+
+def test_unlocked_or_missing_report_has_no_locked_files(env):
+    assert env.locked_report_files() == []
+    run(FULL)
+    assert env.locked_report_files() == []
+
+
+@windows_only
+def test_discard_on_locked_report_leaves_no_partial_copy(env):
+    run(FULL)
+    with opened_in_word(docx_path(env)):
+        with pytest.raises(ReportLocked) as caught:
+            env.discard_insights()
+        assert str(caught.value) == LOCK_MESSAGE
+        assert not list(env.root.glob("_superseded/report_*"))
+    assert env.get_insights() is not None and docx_path(env).is_file()
+
+
+@pytest.mark.parametrize("flag", ["restart", "resynthesize"])
+def test_lock_missed_by_check_stops_without_traceback(env, capsys, monkeypatch, flag):
+    run(FULL)
+    results, decisions, state = env.results(), env.decisions(), env.get_state()
+
+    def locked(self, target):
+        raise PermissionError(13, "dang bi khoa")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(type(env.root), "rename", locked)
+        code, fake = run([], **{flag: True})
+    assert code == loop.STOPPED and fake.calls == []
+    assert "Đóng file report (đang mở trong Word) rồi chạy lại" in capsys.readouterr().out
+    assert (env.results(), env.decisions(), env.get_state()) == (results, decisions, state)
+    assert docx_path(env).is_file() and env.get_insights() is not None
 
 
 def test_fake_restart_yes_reaches_done_with_docx(env):
