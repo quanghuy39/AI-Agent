@@ -1,12 +1,14 @@
 """Diem vao: dieu phoi mot bai theo pha understand -> explore -> plan -> loop -> synthesize -> done.
 
-Chay: python main.py <bai> [--sensitive BANG.cot ...] [--restart] [--resynthesize] [--yes] [--fake] [--no-sync]
+Chay: python main.py <bai> [--sensitive BANG.cot ...] [--restart] [--resynthesize] [--build-report] [--yes] [--fake]
+[--no-sync]
 --sensitive: cot che, chot vao state o lan chay dau; chay tiep dung danh sach trong state, truyen khac thi dung.
 --restart: ket qua valid va moi decision cu thanh superseded (hoi lai tu dau), file work/ sang
 work/_superseded/<thoi diem>/, insights.json sang _superseded/, dong open_item cua buoc xac nhan, ve pha understand
 (run_log giu nguyen; khong truyen --sensitive thi giu danh sach cot che cu).
 --resynthesize: chi chay lai pha synthesize, dung khi state la synthesize hoac done: insights.json sang _superseded/,
 decision chap nhan ket luan thanh superseded (hoi lai); ket qua va decision khac giu nguyen.
+--build-report: dung lai bieu do va Word tu insights.json hien co, khong goi AI, can state done.
 --yes tu tra loi "y" (chi dung khi test). --fake dung FakeLLM voi kich ban demo (khong goi AI that), ho so ghi vao
 output/_fake/<bai>/ nen khong dung toi ho so that, va khong dong bo len R2.
 --no-sync: khong dong bo ho so len R2. Mac dinh dong bo truoc moi cau hoi xac nhan, khi xong va khi thoat vi loi;
@@ -32,6 +34,9 @@ from llm import LLMChainExhausted, LLMError
 from profiling import flags as fl
 from profiling import quality
 from profiling.data_summary import SensitiveLeakError
+from report import build as report_build
+from report.charts import ChartError
+from report.docx_builder import CONCLUSION_KEY, ReportError
 from report.synthesize import print_insights, synthesize
 from runner import run_code as runner
 from skills.analysis.schemas import AnalysisPlan
@@ -39,7 +44,7 @@ from storage import sync as r2_sync
 
 LEAK_OPEN_ITEM = "Bản tóm tắt dữ liệu lộ giá trị cột bị che; cần xem lại khai báo cột nhạy cảm."
 CONCLUSION_OPEN_ITEM = "Kết luận chưa được chấp nhận; chạy lại để AI tổng hợp lại."
-CONCLUSION_KEY = "accept_conclusion|synthesize"  # co dinh: moi lan tu choi roi tong hop lai dung chung mot decision
+REPORT_OPEN_ITEM = "Chưa dựng được báo cáo; sửa lỗi rồi chạy --build-report."
 CONCLUSION_TEXT = "Chấp nhận kết luận tổng hợp trong insights.json"
 
 
@@ -92,6 +97,23 @@ def _run_phase(ctx, state, max_retries, yes, ask_user):
         return Phase.SYNTHESIZE
     _phase_synthesize(ctx, yes, ask_user)
     return Phase.DONE
+
+
+def _build_outputs(ctx):
+    """Dung bao cao tu insights.json, khong goi AI. Chay sau khi ket luan da duoc chap nhan (state done), nen loi o day
+    khong lam mat ket luan: sua roi chay --build-report."""
+    led = ctx.ledger
+    record = led.get_insights()
+    if record is None:
+        raise loop.StopLoop("Chưa có insights.json. Chạy --resynthesize để tổng hợp trước.")
+    try:
+        outputs = report_build.build_report(led, ctx.task, record, ctx.report, ctx.mask)
+    except (ChartError, ReportError) as e:
+        led.add_open_item_once(REPORT_OPEN_ITEM)
+        led.log_event("report", "build", status="error", extra={"error": ctx.mask(str(e))})
+        raise loop.StopLoop(f"Không dựng được báo cáo: {ctx.mask(str(e))} Không ghi file Word.") from None
+    led.close_open_items_with_text(REPORT_OPEN_ITEM)
+    print(f"Báo cáo: {outputs['docx']}")
 
 
 # ---------- ma thoat ----------
@@ -165,6 +187,14 @@ def _resynthesize(led):
     print(f"Tổng hợp lại: {'đã chuyển insights.json sang _superseded/' if insights else 'không có insights.json cũ'}.")
 
 
+def _check_build_report(led):
+    state = led.get_state()
+    if state is None or state.phase != Phase.DONE:
+        where = "chưa có tiến độ" if state is None else f"đang ở pha {state.phase.value}"
+        raise loop.StopLoop(f"--build-report chỉ dùng khi bài đã done, bài này {where}.")
+    return state
+
+
 def _warn_options(yes):
     level = config.get_env("CAUTION_LEVEL", required=False, default=config.CAUTION_DEFAULT)
     if level != config.CAUTION_DEFAULT:
@@ -204,7 +234,7 @@ def _with_sync(ask_user, led, task):
 
 
 def run_task(task, sensitive=None, max_retries=None, yes=False, ask_user=input, restart=False, sync=False,
-             resynthesize=False):
+             resynthesize=False, build_report=False):
     """Chay mot bai tu pha dang do; tra ve ma thoat. sync: dong bo ho so len R2 (CLI bat, goi truc tiep thi tat)."""
     max_retries = config.ANALYSIS_MAX_RETRIES if max_retries is None else max_retries
     led = Ledger(runner.OUTPUT_DIR / task)
@@ -218,6 +248,11 @@ def run_task(task, sensitive=None, max_retries=None, yes=False, ask_user=input, 
             _restart(led, sensitive)
         if resynthesize:
             _resynthesize(led)
+        if build_report:
+            ctx = _open_context(led, task, _check_build_report(led), sensitive)
+            _build_outputs(ctx)
+            code = loop.DONE
+            return code
         state = _load_state(led)
         if state.phase == Phase.DONE:
             print(f"Bài {task} đã xong. Dùng --restart để làm lại.")
@@ -228,6 +263,7 @@ def run_task(task, sensitive=None, max_retries=None, yes=False, ask_user=input, 
         while state.phase != Phase.DONE:
             next_phase = _run_phase(ctx, state, max_retries, yes, ask_user)
             state = led.update_state(phase=next_phase)
+        _build_outputs(ctx)
         led.log_event("analysis", "done", extra={"results": list(led.results_by_question().values())})
         code = loop.DONE
         return code
@@ -273,18 +309,22 @@ def main(argv=None):
     p.add_argument("--restart", action="store_true", help="làm lại từ đầu: kết quả và decision cũ thành superseded")
     p.add_argument("--resynthesize", action="store_true",
                    help="chỉ chạy lại pha synthesize (state synthesize hoặc done), giữ kết quả và decision đã có")
+    p.add_argument("--build-report", action="store_true",
+                   help="dựng lại biểu đồ và Word từ insights.json, không gọi AI (state done)")
     p.add_argument("--yes", action="store_true", help="tự trả lời y (chỉ dùng khi test)")
     p.add_argument("--fake", action="store_true", help="dùng FakeLLM kịch bản demo (không gọi AI thật)")
     p.add_argument("--no-sync", action="store_true", help="không đồng bộ hồ sơ lên R2")
     args = p.parse_args(argv)
     if args.resynthesize and (args.restart or args.sensitive):
         p.error("--resynthesize không dùng cùng --restart hoặc --sensitive")
+    if args.build_report and (args.restart or args.resynthesize or args.sensitive):
+        p.error("--build-report không dùng cùng --restart, --resynthesize hoặc --sensitive")
     try:
         quality._check_problem_id(args.task)
     except ValueError as e:
         p.error(str(e))
     return run_cli(args.task, fake=args.fake, sync=not args.no_sync, sensitive=args.sensitive, restart=args.restart,
-                   resynthesize=args.resynthesize, yes=args.yes)
+                   resynthesize=args.resynthesize, build_report=args.build_report, yes=args.yes)
 
 
 if __name__ == "__main__":

@@ -34,6 +34,7 @@ RESULTS = "results.json"
 FINDINGS = "findings.json"
 OPEN_ITEMS = "open_items.json"
 INSIGHTS = "insights.json"
+REPORT_DIR = "report"
 RUN_LOG = "run_log.jsonl"
 STATE = "state.json"
 WORK_DIR = "work"
@@ -109,12 +110,18 @@ class Ledger:
         self._write_json(INSIGHTS, insights)
 
     def discard_insights(self):
-        """Chuyen insights.json sang _superseded/ o goc ho so, khong xoa (ban bi tu choi, hoac --restart).
-        Khong dat trong work/ de khong lan voi file cua code AI. Tra ve duong dan moi tuong doi, khong co file thi None."""
+        """Chuyen insights.json va thu muc report/ dung tu no sang _superseded/ o goc ho so, khong xoa (ban bi tu choi,
+        hoac --restart). Khong dat trong work/ de khong lan voi file cua code AI. Tra ve duong dan moi cua insights.json
+        (tuong doi), khong co file thi None."""
         path = self._path(INSIGHTS)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        report = self.root / REPORT_DIR
+        if report.is_dir():
+            (self.root / SUPERSEDED_DIR).mkdir(exist_ok=True)
+            shutil.move(report, self.root / SUPERSEDED_DIR / f"report_{stamp}")
         if not path.exists():
             return None
-        target = self.root / SUPERSEDED_DIR / f"insights_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.json"
+        target = self.root / SUPERSEDED_DIR / f"insights_{stamp}.json"
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(path, target)
         moved = target.relative_to(self.root).as_posix()

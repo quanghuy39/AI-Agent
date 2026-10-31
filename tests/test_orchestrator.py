@@ -595,6 +595,82 @@ def test_cli_resynthesize_fake(env):
     assert len(led.results()) == 1 and led.get_state().phase == Phase.DONE and led.get_insights() is not None
 
 
+# bao cao Word
+def docx_path(led):
+    return led.root / "report" / f"bao_cao_{TASK}.docx"
+
+
+def test_done_builds_docx(env, capsys):
+    assert run(FULL)[0] == loop.DONE and docx_path(env).is_file()
+    assert str(docx_path(env)) in capsys.readouterr().out
+    assert [e.status for e in env.read_log() if e.step == "report" and e.action == "build"] == ["ok"]
+
+
+def test_no_docx_before_conclusion_accepted(env):
+    run(FULL, yes=False, ask_user=say_no_to("kết luận"))
+    assert not docx_path(env).exists()
+
+
+def test_build_report_does_not_call_ai_and_rebuilds(env):
+    run(FULL)
+    docx_path(env).unlink()
+    results, decisions = env.results(), env.decisions()
+    code, fake = run([], build_report=True)
+    assert code == loop.DONE and fake.all_calls == [] and docx_path(env).is_file()
+    assert (env.results(), env.decisions()) == (results, decisions) and env.get_state().phase == Phase.DONE
+
+
+@pytest.mark.parametrize("phase_stop", ["loop", "none"])
+def test_build_report_refused_before_done(env, capsys, phase_stop):
+    if phase_stop == "loop":
+        run([RESTATEMENT, PLAN, LLMChainExhausted("hết")])
+    code, fake = run([], build_report=True)
+    assert code == loop.STOPPED and fake.all_calls == [] and "--build-report chỉ dùng khi" in capsys.readouterr().out
+
+
+def test_build_report_without_insights_says_so(env, capsys):
+    run(FULL)
+    (env.root / "insights.json").unlink()
+    code, _ = run([], build_report=True)
+    assert code == loop.STOPPED and "Chưa có insights.json" in capsys.readouterr().out
+
+
+def test_report_error_keeps_done_state_and_build_report_recovers(env, monkeypatch, capsys):
+    def boom(*a, **k):
+        raise app.ReportError("Báo cáo còn placeholder chưa điền.")
+
+    with monkeypatch.context() as m:
+        m.setattr(app.report_build, "build_report", boom)
+        code, _ = run(FULL)
+    assert code == loop.STOPPED and env.get_state().phase == Phase.DONE and not docx_path(env).exists()
+    assert "Không dựng được báo cáo" in capsys.readouterr().out
+    assert app.REPORT_OPEN_ITEM in [o.text for o in env.open_items()]
+    assert run([], build_report=True)[0] == loop.DONE and docx_path(env).is_file()
+    assert [o.status.value for o in env.open_items() if o.text == app.REPORT_OPEN_ITEM] == ["closed"]
+
+
+@pytest.mark.parametrize("extra", ["--restart", "--resynthesize"])
+def test_cli_build_report_rejects_other_options(env, extra):
+    with pytest.raises(SystemExit):
+        app.main([TASK, "--fake", "--yes", "--build-report", extra])
+
+
+def test_restart_and_resynthesize_move_old_report(env):
+    run(FULL)
+    run([], resynthesize=True)
+    assert len(list((env.root / "_superseded").glob("report_*"))) == 1 and docx_path(env).is_file()
+    run([LLMChainExhausted("hết")], restart=True)
+    assert not (env.root / "report").exists() and len(list((env.root / "_superseded").glob("report_*"))) == 2
+
+
+def test_fake_restart_yes_reaches_done_with_docx(env):
+    assert app.main([TASK, "--fake", "--restart", "--yes"]) == loop.DONE
+    led = fake_ledger(env)
+    assert led.get_state().phase == Phase.DONE and docx_path(led).is_file()
+    assert (led.root / "report" / "charts" / "I1.png").is_file()
+    assert app.main([TASK, "--fake", "--build-report"]) == loop.DONE
+
+
 def test_fake_cli_reaches_done_with_insights(env):
     assert app.main([TASK, "--fake", "--yes"]) == loop.DONE
     led = fake_ledger(env)

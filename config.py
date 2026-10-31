@@ -127,6 +127,17 @@ REPORT_TABLE_MAX_COLUMNS = 40        # so ten cot toi da cua moi bang ket qua du
 REPORT_TABLE_SHOW_COLUMNS = 6        # so cot toi da AI chon hien thi cho mot bang
 REPORT_SUBDIR = "report"             # trong output/<bai>/: bieu do, Word, ho so, slides_outline
 REPORT_FONT = "Times New Roman"
+# Word (Ngay 7)
+REPORT_BODY_PT = 12
+REPORT_TABLE_PT = 11
+REPORT_LABEL_PT = 9                  # nhan kiem chung, ghi chu duoi bang
+REPORT_MARGIN_CM = 2.5
+REPORT_PICTURE_CM = 16               # chieu rong anh = kho A4 tru hai le
+REPORT_HEADER_FILL = "D9E2F3"        # mau nen dong tieu de bang
+REPORT_TABLE_MAX_ROWS = 15
+REPORT_SUMMARY_MAX_CHARS = 1500      # khoang nua trang
+# Cot so co tu nay trong ten la ma, khong phai so do: giu nguyen, khong ngan nghin (2024 khong thanh 2.024)
+REPORT_PLAIN_NUMBER_HINTS = ("year", "nam", "id", "code", "ma", "key")
 # Bieu do (Ngay 7)
 REPORT_CHART_FONT_FALLBACK = "DejaVu Sans"  # khi may khong co REPORT_FONT (vd. container); co du dau tieng Viet
 REPORT_CHART_DPI = 200
