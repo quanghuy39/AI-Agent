@@ -29,6 +29,7 @@ class FakeLLM:
     usage_log_path: file usage mac dinh khi chua goi set_usage_log_path. None: lay theo llm.yaml.
     by_schema: {schema pydantic: phan tu nhu tren}. Luot goi co schema nay luon nhan phan tu do, khong theo thu tu
                va khong het (dung cho kich ban chay tiep duoc tu pha bat ky).
+    Phan tu la ham: goi ham voi messages, ket qua dung nhu phan tu (kich ban can doc prompt).
     Phan tu boc FromModel: model_switched tinh nhu client that (so voi model da gan theo task_id).
     """
 
@@ -98,6 +99,8 @@ class FakeLLM:
             "task_id": task_id, "use_cache": use_cache, "model_key": model_key,
         })
         item = self._by_schema[json_schema] if json_schema in self._by_schema else self._next(role)
+        if callable(item):
+            item = item(messages)
         cached = False
         if isinstance(item, FromModel):
             model_key, cached, item = item.model_key, item.cached, item.item

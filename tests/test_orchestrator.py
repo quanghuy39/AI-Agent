@@ -20,6 +20,7 @@ from llm import LLMChainExhausted
 from profiling import quality
 from profiling.data_summary import SensitiveLeakError
 from runner import run_code as runner
+from skills.report.schemas import SynthesisOutput
 from storage import r2
 
 TASK = "bai0a"
@@ -80,10 +81,11 @@ def fake_ledger(env):
 
 
 def run(script, **kw):
-    fake = llm.FakeLLM({"analysis": list(script)})
+    fake = llm.FakeLLM({"analysis": list(script)}, by_schema={SynthesisOutput: loop.demo_synthesis})
     kw.setdefault("yes", True)
     with llm.use_fake(fake):
         code = app.run_task(TASK, **kw)
+    fake.all_calls, fake.calls = fake.calls, [c for c in fake.calls if c["role"] == "analysis"]  # tong hop xet rieng
     return code, fake
 
 
@@ -134,7 +136,7 @@ def test_reject_plan_then_rerun_keeps_plan_and_no_duplicate_decision(env):
 
     code, fake = run([STEP1, STEP2])
     assert code == loop.DONE and schemas(fake) == ["AnalysisStep", "AnalysisStep"]
-    assert [d.text for d in env.decisions()] == ["Tổng giá = cộng cột price"]
+    assert [d.text for d in env.decisions()] == ["Tổng giá = cộng cột price", app.CONCLUSION_TEXT]
     assert "D1 [metric_definition]" in prompts(fake)[0]  # quyet dinh dung lai tu ledger
 
 
@@ -190,8 +192,8 @@ def test_restart_full_rerun_has_one_active_decision(env):
     code, fake = run(FULL, restart=True)
     assert code == loop.DONE and len(fake.calls) == 4
     assert env.results_by_question() == {"Q1": "R3", "Q2": "R4"}
-    assert [d.status.value for d in env.decisions()] == ["superseded", "confirmed"]
-    assert len(env.active_decisions()) == 1
+    assert [d.status.value for d in env.decisions()] == ["superseded", "superseded", "confirmed", "confirmed"]
+    assert len(env.active_decisions()) == 2  # dinh nghia chi so va chap nhan ket luan
 
 
 # 5. ho so cu
@@ -269,11 +271,110 @@ def test_masked_value_not_sent_in_understand_prompt(env):
 
 
 # pha synthesize
-def test_reject_conclusion_stays_in_synthesize(env):
-    code, _ = run(FULL, yes=False, ask_user=say_no_to("kết luận"))
-    assert code == loop.STOPPED and env.get_state().phase == Phase.SYNTHESIZE
+def conclusion(env):
+    return [d for d in env.active_decisions() if d.source_key == app.CONCLUSION_KEY]
+
+
+def n_report_calls(fake):
+    return sum(c["role"] == "report" for c in fake.all_calls)
+
+
+def synthesis_events(env, action):
+    return [e for e in env.read_log() if e.action == action]
+
+
+def test_done_has_insights_and_confirmed_conclusion(env, capsys):
+    code, fake = run(FULL)
+    assert code == loop.DONE and n_report_calls(fake) == 1
+    insights = env.get_insights()
+    assert [i["label"] for i in insights["insights"]] == ["verified", "verified"]
+    assert insights["requirements"] == PLAN["requirements"] and insights["insights"][0]["chart"] is None
+    assert [d.status.value for d in conclusion(env)] == ["confirmed"]
+    assert synthesis_events(env, "confirm_conclusion")[-1].status == "ok"
+    out = capsys.readouterr().out
+    assert "Yêu cầu 1: Số sản phẩm" in out and "I2 [verified] Demo: kết quả R1 ghi nhận 6. (R1)" in out
+
+
+def test_conclusion_is_asked_even_without_flags(env):
+    asked = []
+    code, _ = run(FULL, yes=False, ask_user=lambda q: asked.append(q) or "y")
+    assert code == loop.DONE and sum("Chấp nhận kết luận?" in q for q in asked) == 1
+
+
+def test_reject_conclusion_stays_in_synthesize_and_rerun_asks_ai_again(env):
+    code, fake = run(FULL, yes=False, ask_user=say_no_to("kết luận"))
+    assert code == loop.STOPPED and env.get_state().phase == Phase.SYNTHESIZE and n_report_calls(fake) == 1
+    assert env.get_insights() is None  # ban bi tu choi khong nam lai o ho so
+    assert len(list((env.root / "_superseded").glob("insights_*.json"))) == 1
+    assert [d.status.value for d in conclusion(env)] == ["pending"]
+    assert app.CONCLUSION_OPEN_ITEM in [o.text for o in env.open_items()]
+    assert synthesis_events(env, "confirm_conclusion")[-1].status == "rejected"
+
     code, fake = run([])
-    assert code == loop.DONE and fake.calls == [] and env.get_state().phase == Phase.DONE
+    assert code == loop.DONE and fake.calls == [] and n_report_calls(fake) == 1  # goi lai AI, khong goi lai analysis
+    assert env.get_state().phase == Phase.DONE and env.get_insights() is not None
+    assert [d.status.value for d in conclusion(env)] == ["confirmed"]  # khong sinh decision thu hai
+    assert [o.status.value for o in env.open_items() if o.text == app.CONCLUSION_OPEN_ITEM] == ["closed"]
+
+
+def test_interrupted_at_conclusion_reasks_without_calling_ai(env):
+    def stop(question):
+        if "kết luận" in question:
+            raise KeyboardInterrupt
+        return "y"
+
+    code, fake = run(FULL, yes=False, ask_user=stop)
+    assert code == loop.STOPPED and n_report_calls(fake) == 1 and env.get_insights() is not None
+    code, fake = run([])
+    assert code == loop.DONE and n_report_calls(fake) == 0
+
+
+def test_wrong_synthesis_three_times_stops_and_stays(env):
+    bad = {"summary": "Có 6 dòng.", "insights": [{"id": "I1", "requirement": 1, "text": "x", "result_ids": []}],
+           "conclusion": "c", "limitations": "l"}
+    fake = llm.FakeLLM({"analysis": FULL, "report": [bad] * 3})
+    with llm.use_fake(fake):
+        code = app.run_task(TASK, yes=True)
+    assert code == loop.STOPPED and env.get_state().phase == Phase.SYNTHESIZE and env.get_insights() is None
+    assert conclusion(env) == []
+    assert run([])[0] == loop.DONE and [o.status.value for o in env.open_items()] == ["closed"]
+
+
+def test_chain_exhausted_in_synthesize_exit_2_then_resume(env):
+    fake = llm.FakeLLM({"analysis": FULL, "report": [LLMChainExhausted("hết")]})
+    with llm.use_fake(fake):
+        code = app.run_task(TASK, yes=True)
+    assert code == loop.EXHAUSTED and env.get_state().phase == Phase.SYNTHESIZE
+    assert run([])[0] == loop.DONE
+    assert [o.status.value for o in env.open_items() if o.text == loop.CHAIN_OPEN_ITEM] == ["closed"]
+
+
+def test_restart_discards_old_insights(env):
+    run(FULL)
+    code, _ = run([LLMChainExhausted("hết")], restart=True)
+    assert code == loop.EXHAUSTED and env.get_insights() is None
+    assert len(list((env.root / "_superseded").glob("insights_*.json"))) == 1
+    code, _ = run(FULL)
+    insights = env.get_insights()
+    assert code == loop.DONE and insights["insights"][0]["result_ids"] == ["R3"]  # khong lan ket qua cu
+
+
+def test_synthesis_prompt_masks_sensitive(env):
+    code, fake = run(FULL, sensitive=["PRODUCT.product_id"])
+    report = [c for c in fake.all_calls if c["role"] == "report"]
+    assert code == loop.DONE and len(report) == 1 and "[đã che]" in report[0]["messages"][0]["content"]
+    assert not any(p in report[0]["messages"][0]["content"] for p in IDS)
+
+
+def test_fake_cli_reaches_done_with_insights(env):
+    assert app.main([TASK, "--fake", "--yes"]) == loop.DONE
+    led = fake_ledger(env)
+    insights = led.get_insights()
+    assert led.get_state().phase == Phase.DONE and (led.root / "insights.json").is_file()
+    assert insights["model"] == "fake" and insights["insights"][0]["label"] == "verified"
+    assert "{{" not in insights["insights"][0]["text_filled"]
+    assert app.main([TASK, "--fake", "--yes", "--restart"]) == loop.DONE  # id ket qua doi: R2
+    assert fake_ledger(env).get_insights()["insights"][0]["result_ids"] == ["R2"]
 
 
 # ma thoat

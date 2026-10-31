@@ -119,6 +119,12 @@ CONTEXT_CORRECTIONS_SHORT_CHARS = 400  # nhu tren, khi phai cat
 CONTEXT_PREVIOUS_MAX_RESULTS = 8     # khi phai cat: so ket qua moi nhat (cong ket qua cau hien tai phu thuoc)
 CONTEXT_PREVIOUS_MAX_FILES = 20      # khi phai cat: so file moi nhat trong work/
 CONTEXT_DECISIONS_MAX = 15           # khi phai cat: so decision giu lai
+# Tong hop (Ngay 7)
+REPORT_SYNTH_MAX_RETRIES = 2         # so lan gui lai AI kem danh sach loi, sau lan dau
+REPORT_FEEDBACK_MAX_ERRORS = 20      # so loi toi da trong moi lan gui lai
+REPORT_MAX_DECIMALS = 2              # so chu so thap phan toi da khi dien so co |x| >= 1 vao van ban
+REPORT_SIG_DIGITS = 3                # so chu so co nghia khi dien so co 0 < |x| < 1 (ty le nho khong bi lam tron mat)
+REPORT_PERCENT_FIELD_HINTS = ("pct", "percent")  # ten truong chua mot tu nay moi duoc viet % phia sau
 # Cot che mac dinh theo bai (cong voi (SENSITIVE) trong dictionary va --sensitive); chi ap dung khi cot co that.
 ANALYSIS_DEFAULT_SENSITIVE = {"bai1": ["CUSTOMER.customer_id"]}
 # Module goc (phan truoc dau cham dau tien) bi cam import trong code AI.

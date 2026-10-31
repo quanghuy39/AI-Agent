@@ -19,7 +19,8 @@ Trạng thái từng ngày: xem `PROGRESS.md`.
   `relationships.py`, `data_summary.py` (bản tóm tắt đã che cho AI).
 - `validators/` – `rows.py`, `join.py`, `sums.py`, `ranges.py`, `result.py` (row_count/join/sum/range check).
 - `ledger/` – `schema.py`, `ledger.py`: hồ sơ bài ở `output/<bài>/` (results, decisions, findings, open_items,
-  data_profile, problem, state, run_log.jsonl; file của lần làm trước ở `work/_superseded/<thời điểm>/`). Decision có
+  data_profile, problem, state, insights, run_log.jsonl; file của lần làm trước ở `work/_superseded/<thời điểm>/`,
+  `insights.json` bị bỏ ở `_superseded/`). Decision có
   status pending, confirmed, superseded; code dùng `active_decisions()`, `decisions()` trả cả superseded để đối chiếu.
 - `runner/run_code.py` – chạy code AI: thư mục tạm, input chỉ đọc, bỏ biến bí mật, quét ast, timeout, meta.
 - `main.py` – luồng duy nhất: máy trạng thái understand → explore → plan → loop → synthesize → done, lưu `state.json`
@@ -32,7 +33,10 @@ Trạng thái từng ngày: xem `PROGRESS.md`.
   chỉ gọi sang `main.py`), `meta_grader.py`.
 - `skills/analysis/` – `understand.md`, `plan.md`, `step.md`, `contract.md` (prompt), `schemas.py` (ProblemRestatement,
   AnalysisPlan, AnalysisStep, AgentMeta), `__init__.py` (load_prompt, render_prompt).
-- `report/`, `slides/` – mới có `__init__.py` (chưa làm).
+- `report/` – `placeholders.py` (điền số, định dạng, `validate_synthesis`, nhãn), `synthesize.py` (pha tổng hợp).
+- `skills/report/` – `synthesize.md` (prompt), `schemas.py` (SynthesisOutput, Insight, nội dung `insights.json`),
+  `__init__.py` (load_prompt, render_prompt).
+- `slides/` – mới có `__init__.py` (chưa làm).
 - `templates/data_dictionary_template.md` – mẫu data dictionary.
 - `tests/` – pytest `test_*.py`; script chạy tay (`grade.py`, `grade_bai0b.py`, `try_ask_model.py`, `list_models.py`,
   `probe_*.py`, `make_*.py`); `tests/llm_eval/` bộ kiểm định model (cases, scoring, run_eval, summary, thresholds.yaml).
@@ -64,7 +68,7 @@ lộ giá trị che).
 Chạy lại: tiếp từ pha trong `state.json`; câu đã giải lấy từ `Ledger.results_by_question()` (chỉ kết quả valid).
 `--sensitive` chốt vào state ở lần chạy đầu, muốn đổi thì `--restart --sensitive ...`. `--restart` chuyển kết quả valid
 và mọi decision thành superseded (giữ trong file, không dùng lại, hỏi lại từ đầu), toàn bộ file `work/` sang
-`work/_superseded/<thời điểm>/`, đóng open_item của bước xác nhận; run_log giữ nguyên.
+`work/_superseded/<thời điểm>/`, `insights.json` sang `_superseded/`, đóng open_item của bước xác nhận; run_log giữ nguyên.
 Đồng bộ R2 (trừ `--fake`, `--no-sync`): trước mỗi câu hỏi xác nhận, khi xong và khi thoát vì lỗi; lỗi đồng bộ chỉ cảnh
 báo một dòng, ghi sự kiện `sync` trong run_log, lần sau tải lại nhờ manifest. `run_task` gọi trực tiếp thì mặc định tắt.
 Lọc output tiếng Việt bằng `Select-String` cần `[Console]::OutputEncoding = [Text.Encoding]::UTF8`.

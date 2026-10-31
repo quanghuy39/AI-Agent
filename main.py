@@ -3,8 +3,8 @@
 Chay: python main.py <bai> [--sensitive BANG.cot ...] [--restart] [--yes] [--fake] [--no-sync]
 --sensitive: cot che, chot vao state o lan chay dau; chay tiep dung danh sach trong state, truyen khac thi dung.
 --restart: ket qua valid va moi decision cu thanh superseded (hoi lai tu dau), file work/ sang
-work/_superseded/<thoi diem>/, dong open_item cua buoc xac nhan, ve pha understand (run_log giu nguyen; khong truyen
---sensitive thi giu danh sach cot che cu).
+work/_superseded/<thoi diem>/, insights.json sang _superseded/, dong open_item cua buoc xac nhan, ve pha understand
+(run_log giu nguyen; khong truyen --sensitive thi giu danh sach cot che cu).
 --yes tu tra loi "y" (chi dung khi test). --fake dung FakeLLM voi kich ban demo (khong goi AI that), ho so ghi vao
 output/_fake/<bai>/ nen khong dung toi ho so that, va khong dong bo len R2.
 --no-sync: khong dong bo ho so len R2. Mac dinh dong bo truoc moi cau hoi xac nhan, khi xong va khi thoat vi loi;
@@ -27,13 +27,18 @@ import llm
 from analysis import loop
 from ledger import Ledger, Phase
 from llm import LLMChainExhausted, LLMError
+from profiling import flags as fl
 from profiling import quality
 from profiling.data_summary import SensitiveLeakError
+from report.synthesize import print_insights, synthesize
 from runner import run_code as runner
 from skills.analysis.schemas import AnalysisPlan
 from storage import sync as r2_sync
 
 LEAK_OPEN_ITEM = "Bản tóm tắt dữ liệu lộ giá trị cột bị che; cần xem lại khai báo cột nhạy cảm."
+CONCLUSION_OPEN_ITEM = "Kết luận chưa được chấp nhận; chạy lại để AI tổng hợp lại."
+CONCLUSION_KEY = "accept_conclusion|synthesize"  # co dinh: moi lan tu choi roi tong hop lai dung chung mot decision
+CONCLUSION_TEXT = "Chấp nhận kết luận tổng hợp trong insights.json"
 
 
 # ---------- cac pha ----------
@@ -60,6 +65,25 @@ def _phase_loop(ctx, state, max_retries, yes, ask_user):
         loop.solve_question(ctx, q, solved, max_retries, yes, ask_user)
 
 
+def _phase_synthesize(ctx, yes, ask_user):
+    """Tong hop roi hoi "Chap nhan ket luan?" (luon dung). insights.json con do thi la ban chua duoc tra loi (vd. ngat
+    giua chung): hoi lai, khong goi AI. Tra loi n: bo ban nay, giu pha synthesize, chay lai se tong hop lai."""
+    loop.print_summary(ctx)
+    led = ctx.ledger
+    record = led.get_insights() or synthesize(led, ctx.task, ctx.mask, fl.all_flags(ctx.report))
+    led.close_open_items_with_text(loop.CHAIN_OPEN_ITEM)  # da chay tiep duoc: muc nay het y nghia
+    print_insights(record)
+    d = loop._add_pending(ctx, "assumption", CONCLUSION_TEXT, True, CONCLUSION_KEY)  # pending truoc khi hoi
+    if not loop.confirm("Chấp nhận kết luận?", yes, ask_user):
+        led.discard_insights()
+        led.add_open_item_once(CONCLUSION_OPEN_ITEM)
+        led.log_event("report", "confirm_conclusion", status="rejected")
+        raise loop.StopLoop("Người dùng chưa chấp nhận kết luận.")
+    loop._confirm_decision(ctx, d)
+    led.close_open_items_with_text(CONCLUSION_OPEN_ITEM)
+    led.log_event("report", "confirm_conclusion", extra={"decision": d.id, "n_insights": len(record["insights"])})
+
+
 def _run_phase(ctx, state, max_retries, yes, ask_user):
     """Chay pha dang do cua state, tra ve pha ke tiep."""
     if state.phase == Phase.UNDERSTAND:
@@ -74,7 +98,7 @@ def _run_phase(ctx, state, max_retries, yes, ask_user):
     if state.phase == Phase.LOOP:
         _phase_loop(ctx, state, max_retries, yes, ask_user)
         return Phase.SYNTHESIZE
-    loop.synthesize(ctx, yes, ask_user)
+    _phase_synthesize(ctx, yes, ask_user)
     return Phase.DONE
 
 
@@ -126,9 +150,12 @@ def _restart(led, sensitive):
     decisions = led.supersede_decisions()
     led.close_open_items_with_text(loop.PLAN_OPEN_ITEM)
     led.close_open_items_with_text(loop.PENDING_OPEN_ITEM)
+    led.close_open_items_with_text(CONCLUSION_OPEN_ITEM)
+    insights = led.discard_insights()
     # khong truyen --sensitive: giu danh sach cu, khong am tham bo che
     led.set_state(Phase.UNDERSTAND, sensitive=None if sensitive or old is None else old.sensitive)
-    led.log_event("analysis", "restart", extra={"superseded": superseded, "superseded_decisions": decisions})
+    led.log_event("analysis", "restart", extra={"superseded": superseded, "superseded_decisions": decisions,
+                                                "superseded_insights": insights})
     print(f"Làm lại từ đầu: {len(superseded)} kết quả và {len(decisions)} decision cũ chuyển superseded.")
 
 

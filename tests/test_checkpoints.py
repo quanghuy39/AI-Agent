@@ -17,6 +17,7 @@ from llm.fake import FromModel
 from profiling import flags as fl
 from profiling import quality
 from runner import run_code as runner
+from skills.report.schemas import SynthesisOutput
 from storage import r2
 
 TASK = "bai0a"       # du lieu sach, khong co co muc flag
@@ -93,10 +94,11 @@ def env(tmp_path, monkeypatch):
 
 
 def run(script, task=TASK, **kw):
-    fake = llm.FakeLLM({"analysis": list(script)})
+    fake = llm.FakeLLM({"analysis": list(script)}, by_schema={SynthesisOutput: loop.demo_synthesis})
     kw.setdefault("yes", True)
     with llm.use_fake(fake):
         code = app.run_task(task, **kw)
+    fake.all_calls, fake.calls = fake.calls, [c for c in fake.calls if c["role"] == "analysis"]  # tong hop xet rieng
     return code, fake
 
 
@@ -121,8 +123,17 @@ EACH = "y = đồng ý"
 LIST = "y = chấp nhận tất cả"
 
 
+def plan_decisions(led):
+    """Decision cua pha plan va loop: bo decision cua diem dung ket luan."""
+    return [d for d in led.decisions() if d.source_key != app.CONCLUSION_KEY]
+
+
+def active_plan_decisions(led):
+    return [d for d in led.active_decisions() if d.source_key != app.CONCLUSION_KEY]
+
+
 def statuses(led):
-    return {d.text: d.status.value for d in led.decisions()}
+    return {d.text: d.status.value for d in plan_decisions(led)}
 
 
 def open_texts(led):
@@ -143,7 +154,7 @@ def test_stop_while_asking_metric_keeps_pending_and_resumes_without_duplicates(e
     code, fake = run([STEP1, STEP2], yes=False, ask_user=ans)
     assert code == loop.DONE and len(fake.calls) == 2  # khong goi lai understand, plan
     assert ans.count(EACH) == 2  # M2, ANOMALY; M1 khong hoi lai
-    assert len(env.decisions()) == 5 and set(statuses(env).values()) == {"confirmed"}
+    assert len(plan_decisions(env)) == 5 and set(statuses(env).values()) == {"confirmed"}
     assert open_texts(env) == []
 
 
@@ -152,7 +163,7 @@ def test_all_assumptions_written_pending_before_first_question(env):
 
     def ask(q):
         if EACH in q:
-            seen.append([d.status.value for d in env.decisions()])
+            seen.append([d.status.value for d in plan_decisions(env)])
             return "n"
         return "y"
 
@@ -200,7 +211,7 @@ def test_choose_s_saves_user_text_confirmed(env):
     code, fake = run([RESTATEMENT, PLAN, STEP1, STEP2], yes=False,
                      ask_user=Answers("y", "s", "Số sản phẩm = số mã khác nhau"))
     assert code == loop.DONE
-    d = env.decisions()[0]
+    d = plan_decisions(env)[0]
     assert (d.text, d.status.value) == ("Số sản phẩm = số mã khác nhau", "confirmed")
     assert "Số sản phẩm = số mã khác nhau" in fake.calls[2]["messages"][0]["content"]
     assert M1 not in statuses(env)
@@ -209,7 +220,7 @@ def test_choose_s_saves_user_text_confirmed(env):
 def test_user_edit_is_not_recreated_on_rerun(env):
     run([RESTATEMENT, PLAN], yes=False, ask_user=Answers("y", "s", "Nội dung mới", "n"))
     assert run([STEP1, STEP2])[0] == loop.DONE
-    assert M1 not in statuses(env) and len(env.decisions()) == 5
+    assert M1 not in statuses(env) and len(plan_decisions(env)) == 5
 
 
 def test_empty_s_asks_again(env):
@@ -280,7 +291,7 @@ def test_flag_decisions_pending_required_and_not_duplicated_after_reprofiling(en
     code, _ = run([RESTATEMENT, SIMPLE_PLAN], task=FLAGGED, yes=False, ask_user=Answers(rules=[(EACH, "n")]))
     assert code == loop.STOPPED
     led = flagged_ledger(env)
-    first = led.decisions()
+    first = plan_decisions(led)
     by_key = {d.source_key: d for d in first}
     assert DUP_ORDERS in by_key and DUP_RETURNS in by_key
     d = by_key[DUP_ORDERS]
@@ -289,19 +300,19 @@ def test_flag_decisions_pending_required_and_not_duplicated_after_reprofiling(en
     quality.profile_problem(FLAGGED)
     quality.profile_problem(FLAGGED)
     code, _ = run([], task=FLAGGED, yes=False, ask_user=Answers(rules=[(EACH, "n")]))
-    assert code == loop.STOPPED and led.decisions() == first
+    assert code == loop.STOPPED and plan_decisions(led) == first
 
 
 def test_flag_decision_asked_again_after_restart_without_active_duplicate(env):
     assert run([RESTATEMENT, SIMPLE_PLAN, STEP1, STEP2], task=FLAGGED)[0] == loop.DONE
     led = flagged_ledger(env)
-    n = len(led.decisions())
+    n = len(plan_decisions(led))
     quality.profile_problem(FLAGGED)
     ans = Answers()
     assert run([RESTATEMENT, SIMPLE_PLAN, STEP1, STEP2], task=FLAGGED, yes=False, ask_user=ans,
                restart=True)[0] == loop.DONE
-    assert ans.count(EACH) == n and len(led.active_decisions()) == n and len(led.decisions()) == 2 * n
-    assert sorted(d.source_key for d in led.decisions()[:n]) == sorted(d.source_key for d in led.active_decisions())
+    assert ans.count(EACH) == n and len(active_plan_decisions(led)) == n and len(plan_decisions(led)) == 2 * n
+    assert sorted(d.source_key for d in plan_decisions(led)[:n]) == sorted(d.source_key for d in active_plan_decisions(led))
 
 
 # --restart: decision cua lan truoc khong dung lai
@@ -316,18 +327,18 @@ def test_restart_asks_metric_and_anomaly_again(env):
     ans = Answers()
     assert run([RESTATEMENT, NEW_PLAN, STEP1, STEP2], yes=False, ask_user=ans, restart=True)[0] == loop.DONE
     assert ans.count(EACH) == 3  # M1, ANOMALY giong het lan truoc van hoi lai
-    active = env.active_decisions()
+    active = active_plan_decisions(env)
     assert {d.text for d in active} == {M1, NEW_M2, ANOMALY} and {d.status.value for d in active} == {"confirmed"}
 
 
 def test_restart_keeps_old_decisions_as_superseded_in_file(env):
     run([RESTATEMENT, PLAN, STEP1, STEP2])
-    old = {d.id: d for d in env.decisions()}
+    old = {d.id: d for d in plan_decisions(env)}
     run([RESTATEMENT, NEW_PLAN, STEP1, STEP2], restart=True)
     raw = {d["id"]: d for d in json.loads((env.root / "decisions.json").read_text(encoding="utf-8"))}
     assert all(raw[i]["status"] == "superseded" and raw[i]["text"] == d.text and raw[i]["confirmed_at"] == d.confirmed_at
                for i, d in old.items())
-    assert len(raw) == len(old) + 3
+    assert len(raw) == len(old) + 5  # 3 decision moi va 2 decision chap nhan ket luan
 
 
 def test_superseded_decision_not_in_step_prompt_or_render(env):
@@ -368,7 +379,7 @@ def test_report_saved_before_source_key_gets_keys_on_load(env):
 def test_old_decisions_without_source_key_are_readable(env):
     (env.root / "decisions.json").write_text(json.dumps([{"id": "D1", "kind": "assumption", "text": "cũ"}]),
                                              encoding="utf-8")
-    assert env.decisions()[0].source_key is None
+    assert plan_decisions(env)[0].source_key is None
 
 
 def test_ai_proposal_shown_next_to_flag_not_separate_decision(env, capsys):
@@ -376,10 +387,10 @@ def test_ai_proposal_shown_next_to_flag_not_separate_decision(env, capsys):
                                             "flag_key": DUP_ORDERS}]}
     code, _ = run([RESTATEMENT, plan, STEP1, STEP2], task=FLAGGED, yes=False, ask_user=Answers())
     assert code == loop.DONE
-    d = next(x for x in flagged_ledger(env).decisions() if x.source_key == DUP_ORDERS)
+    d = next(x for x in plan_decisions(flagged_ledger(env)) if x.source_key == DUP_ORDERS)
     assert "khóa trùng" in d.text and "→ Xử lý: Lấy dòng đầu mỗi khóa" in d.text
     assert d.status.value == "confirmed" and "Lấy dòng đầu mỗi khóa" in capsys.readouterr().out
-    assert not any(x.text == "Lấy dòng đầu mỗi khóa" for x in flagged_ledger(env).decisions())
+    assert not any(x.text == "Lấy dòng đầu mỗi khóa" for x in plan_decisions(flagged_ledger(env)))
 
 
 def test_user_can_replace_ai_proposal_with_s(env):
@@ -389,12 +400,12 @@ def test_user_can_replace_ai_proposal_with_s(env):
     def ask(q):  # decision dang hoi la decision pending dau tien; chi chon s o dung co nay
         if "Nội dung mới" in q:
             return "Bỏ mọi khóa trùng"
-        current = next((d for d in led.decisions() if d.status.value == "pending"), None)
+        current = next((d for d in plan_decisions(led) if d.status.value == "pending"), None)
         return "s" if EACH in q and current.source_key == DUP_ORDERS else "y"
 
     code, _ = run([RESTATEMENT, plan, STEP1, STEP2], task=FLAGGED, yes=False, ask_user=ask)
     assert code == loop.DONE
-    d = next(x for x in led.decisions() if x.source_key == DUP_ORDERS)
+    d = next(x for x in plan_decisions(led) if x.source_key == DUP_ORDERS)
     assert (d.text, d.status.value) == ("Bỏ mọi khóa trùng", "confirmed")
 
 
@@ -411,7 +422,7 @@ def test_info_flags_create_no_decision_but_are_printed(env, capsys):
     led = flagged_ledger(env)
     info = [f for f in fl.all_flags(led.get_data_profile()[quality.REPORT_KEY]) if f["severity"] == fl.INFO]
     assert info and "Lưu ý về dữ liệu" in out and all(f["message"] in out for f in info)
-    keys = {d.source_key for d in led.decisions()}
+    keys = {d.source_key for d in plan_decisions(led)}
     assert not keys & {f["source_key"] for f in info}
 
 
@@ -436,7 +447,7 @@ def test_info_only_asks_one_question_and_rerun_does_not_duplicate(env, capsys):
     assert code == loop.STOPPED and ans.count(EACH) == 1
     assert out.index("Lưu ý về dữ liệu") < out.index(loop.KEEP_DATA_QUESTION)
     led = info_ledger(env)
-    (d,) = led.decisions()
+    (d,) = plan_decisions(led)
     assert (d.kind.value, d.status.value, d.required, d.source_key, d.text) \
         == ("anomaly_handling", "pending", True, loop.KEEP_DATA_KEY, loop.KEEP_DATA_TEXT)
     assert led.get_state().phase == Phase.PLAN
@@ -444,20 +455,20 @@ def test_info_only_asks_one_question_and_rerun_does_not_duplicate(env, capsys):
     ans = Answers()
     code, _ = run([STEP1, STEP2], task=INFO_ONLY, yes=False, ask_user=ans)
     assert code == loop.DONE and ans.count(EACH) == 1
-    (d,) = led.decisions()
+    (d,) = plan_decisions(led)
     assert d.status.value == "confirmed"
 
     ans = Answers()
     code, _ = run([RESTATEMENT, SIMPLE_PLAN, STEP1, STEP2], task=INFO_ONLY, yes=False, ask_user=ans, restart=True)
-    assert code == loop.DONE and ans.count(EACH) == 1 and len(led.decisions()) == 2
-    assert len(led.active_decisions()) == 1
+    assert code == loop.DONE and ans.count(EACH) == 1 and len(plan_decisions(led)) == 2
+    assert len(active_plan_decisions(led)) == 1
 
 
 def test_info_only_s_saves_user_text_and_keeps_key(env):
     code, _ = run([RESTATEMENT, SIMPLE_PLAN, STEP1, STEP2], task=INFO_ONLY, yes=False,
                   ask_user=Answers("y", "s", "Bỏ khách không có đơn"))
     assert code == loop.DONE
-    (d,) = info_ledger(env).decisions()
+    (d,) = plan_decisions(info_ledger(env))
     assert (d.text, d.status.value, d.source_key) == ("Bỏ khách không có đơn", "confirmed", loop.KEEP_DATA_KEY)
 
 
@@ -471,30 +482,30 @@ def test_no_flags_prints_nothing_abnormal_and_does_not_ask(env, capsys):
     ans = Answers()
     code, _ = run([RESTATEMENT, SIMPLE_PLAN, STEP1, STEP2], yes=False, ask_user=ans)
     assert code == loop.DONE and "Không có bất thường" in capsys.readouterr().out
-    assert ans.count(EACH) == 0 and env.decisions() == []
+    assert ans.count(EACH) == 0 and plan_decisions(env) == []
 
 
 def test_info_with_ai_anomaly_decision_does_not_add_keep_question(env):
     plan = {**SIMPLE_PLAN, "assumptions": [{"kind": "anomaly_handling", "text": "Bỏ khách không có đơn"}]}
     ans = Answers()
     assert run([RESTATEMENT, plan, STEP1, STEP2], task=INFO_ONLY, yes=False, ask_user=ans)[0] == loop.DONE
-    assert ans.count(EACH) == 1 and [d.text for d in info_ledger(env).decisions()] == ["Bỏ khách không có đơn"]
+    assert ans.count(EACH) == 1 and [d.text for d in plan_decisions(info_ledger(env))] == ["Bỏ khách không có đơn"]
 
 
 def test_flag_with_info_does_not_add_keep_question(env):
     assert run([RESTATEMENT, SIMPLE_PLAN, STEP1, STEP2], task=FLAGGED)[0] == loop.DONE
-    assert loop.KEEP_DATA_KEY not in {d.source_key for d in flagged_ledger(env).decisions()}
+    assert loop.KEEP_DATA_KEY not in {d.source_key for d in plan_decisions(flagged_ledger(env))}
 
 
 def test_accept_flags_decision_does_not_count_as_answered(env):
     info_ledger(env).add_decision("anomaly_handling", "chấp nhận R1 dù có cờ x", source_key="accept_flags|R1")
     assert run([RESTATEMENT, SIMPLE_PLAN, STEP1, STEP2], task=INFO_ONLY)[0] == loop.DONE
-    assert loop.KEEP_DATA_KEY in {d.source_key for d in info_ledger(env).decisions()}
+    assert loop.KEEP_DATA_KEY in {d.source_key for d in plan_decisions(info_ledger(env))}
 
 
 def test_flag_without_ai_proposal_uses_default_text(env):
     run([RESTATEMENT, SIMPLE_PLAN, STEP1, STEP2], task=FLAGGED)
-    d = next(x for x in flagged_ledger(env).decisions() if x.source_key == DUP_ORDERS)
+    d = next(x for x in plan_decisions(flagged_ledger(env)) if x.source_key == DUP_ORDERS)
     assert d.text.endswith("→ Xử lý: (chưa có đề xuất của AI) giữ nguyên, không xử lý riêng")
 
 
@@ -562,7 +573,7 @@ def test_restart_forgets_model(env):
 def test_continue_with_flag_records_confirmed_decision(env):
     code, _ = run([RESTATEMENT, SIMPLE_PLAN, step("q1", passed=False), STEP2], yes=False, ask_user=Answers())
     assert code == loop.DONE
-    d = next(x for x in env.decisions() if "dù có cờ" in x.text)
+    d = next(x for x in plan_decisions(env) if "dù có cờ" in x.text)
     assert (d.text, d.status.value) == ("chấp nhận R1 dù có cờ có dòng", "confirmed")
 
 

@@ -13,6 +13,7 @@ from ledger import Ledger, Phase
 from llm import LLMChainExhausted
 from profiling import quality
 from runner import run_code as runner
+from skills.report.schemas import SynthesisOutput
 from storage import r2, sync
 
 TASK = "bai0a"
@@ -80,10 +81,12 @@ def record(env, files=None):
 
 
 def run(script, **kw):
-    fake = llm.FakeLLM({"analysis": list(script)})
+    fake = llm.FakeLLM({"analysis": list(script)}, by_schema={SynthesisOutput: loop.demo_synthesis})
     kw.setdefault("yes", True)
     with llm.use_fake(fake):
-        return app.run_cli(TASK, **kw), fake
+        code = app.run_cli(TASK, **kw)
+    fake.all_calls, fake.calls = fake.calls, [c for c in fake.calls if c["role"] == "analysis"]  # tong hop xet rieng
+    return code, fake
 
 
 @pytest.fixture
@@ -324,7 +327,7 @@ def test_no_sync_never_syncs(env, calls):
 
 
 def test_main_no_sync_flag(env, calls, monkeypatch):
-    fake = llm.FakeLLM({"analysis": [RESTATEMENT, PLAN, STEP]})
+    fake = llm.FakeLLM({"analysis": [RESTATEMENT, PLAN, STEP]}, by_schema={SynthesisOutput: loop.demo_synthesis})
     with llm.use_fake(fake):
         assert app.main([TASK, "--no-sync", "--yes"]) == loop.DONE
     assert calls == []
@@ -420,7 +423,7 @@ def test_real_flow_puts_record_on_r2_and_retries_next_run(env):
 
 
 def test_analysis_loop_cli_syncs_unless_no_sync(env, calls):
-    fake = llm.FakeLLM({"analysis": [RESTATEMENT, PLAN, STEP]})
+    fake = llm.FakeLLM({"analysis": [RESTATEMENT, PLAN, STEP]}, by_schema={SynthesisOutput: loop.demo_synthesis})
     with llm.use_fake(fake):
         assert loop.main([TASK, "--yes", "--no-sync"]) == loop.DONE
     assert calls == []
@@ -429,7 +432,7 @@ def test_analysis_loop_cli_syncs_unless_no_sync(env, calls):
 
 
 def test_run_task_direct_default_does_not_sync(env, calls):
-    fake = llm.FakeLLM({"analysis": [RESTATEMENT, PLAN, STEP]})
+    fake = llm.FakeLLM({"analysis": [RESTATEMENT, PLAN, STEP]}, by_schema={SynthesisOutput: loop.demo_synthesis})
     with llm.use_fake(fake):
         assert app.run_task(TASK, yes=True) == loop.DONE
     assert calls == []

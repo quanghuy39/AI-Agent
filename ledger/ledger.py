@@ -33,10 +33,11 @@ DECISIONS = "decisions.json"
 RESULTS = "results.json"
 FINDINGS = "findings.json"
 OPEN_ITEMS = "open_items.json"
+INSIGHTS = "insights.json"
 RUN_LOG = "run_log.jsonl"
 STATE = "state.json"
 WORK_DIR = "work"
-SUPERSEDED_DIR = "_superseded"  # trong work/: file cua lan lam truoc, khong dua cho AI
+SUPERSEDED_DIR = "_superseded"  # trong work/ va o goc ho so: file cua lan lam truoc, khong dua cho AI
 
 
 def _id_number(item_id):
@@ -98,6 +99,27 @@ class Ledger:
 
     def set_data_profile(self, profile):
         self._write_json(DATA_PROFILE, profile)
+
+    # ---------- tong hop ----------
+
+    def get_insights(self):
+        return self._read_json(INSIGHTS, None)
+
+    def set_insights(self, insights):
+        self._write_json(INSIGHTS, insights)
+
+    def discard_insights(self):
+        """Chuyen insights.json sang _superseded/ o goc ho so, khong xoa (ban bi tu choi, hoac --restart).
+        Khong dat trong work/ de khong lan voi file cua code AI. Tra ve duong dan moi tuong doi, khong co file thi None."""
+        path = self._path(INSIGHTS)
+        if not path.exists():
+            return None
+        target = self.root / SUPERSEDED_DIR / f"insights_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(path, target)
+        moved = target.relative_to(self.root).as_posix()
+        self.log_event("ledger", "discard_insights", extra={"moved_to": moved})
+        return moved
 
     # ---------- tien do ----------
 

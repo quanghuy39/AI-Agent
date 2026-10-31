@@ -18,6 +18,7 @@ from ledger import Ledger, Phase
 from llm import LLMConfigError, client
 from profiling import quality
 from runner import run_code as runner
+from skills.report.schemas import SynthesisOutput
 from skills.analysis import load_prompt
 from skills.analysis.schemas import SubQuestion
 from storage import r2
@@ -65,10 +66,11 @@ def env(tmp_path, monkeypatch):
 
 
 def run(script, **kw):
-    fake = llm.FakeLLM({"analysis": list(script)})
+    fake = llm.FakeLLM({"analysis": list(script)}, by_schema={SynthesisOutput: loop.demo_synthesis})
     kw.setdefault("yes", True)
     with llm.use_fake(fake):
         code = app.run_task(TASK, **kw)
+    fake.all_calls, fake.calls = fake.calls, [c for c in fake.calls if c["role"] == "analysis"]  # tong hop xet rieng
     return code, fake
 
 
@@ -341,8 +343,9 @@ def test_real_config_has_max_input_tokens():
 def test_every_prompt_logged_with_role_prompt_tokens_budget_cuts(env):
     assert run([RESTATEMENT, PLAN, STEP])[0] == loop.DONE
     events = [e for e in env.read_log() if e.action == "prompt_fit"]
-    assert [e.extra["prompt"] for e in events] == ["understand", "plan", "step"]
-    for e in events:
+    assert [e.extra["prompt"] for e in events] == ["understand", "plan", "step", "synthesize"]
+    assert events[-1].extra["role"] == "report" and events[-1].extra["budget"] == 27000
+    for e in events[:-1]:
         assert e.extra["role"] == "analysis" and e.extra["budget"] == 8100
         assert e.extra["tokens_after"] > 0 and e.extra["cut"] == [] and e.status == "ok"
-    assert events[-1].inputs == {"question": "Q1"}
+    assert events[-2].inputs == {"question": "Q1"}

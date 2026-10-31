@@ -11,6 +11,7 @@ Moi chuoi dua lai cho AI deu qua mask_text: gia tri that cua cot che -> [đã ch
 
 import argparse
 import hashlib
+import json
 import re
 import sys
 from dataclasses import dataclass, field
@@ -29,6 +30,7 @@ from profiling.data_summary import build_data_summary
 from runner import run_code as runner
 from skills.analysis import render_prompt
 from skills.analysis.schemas import AnalysisPlan, AnalysisStep, ProblemRestatement
+from skills.report.schemas import SynthesisOutput
 from storage import r2
 
 MASK = "[đã che]"
@@ -571,16 +573,20 @@ def _decision_rank(d):
     return {"metric_definition": 0, "anomaly_handling": 1}.get(d.kind, 2)
 
 
-def _short_decisions(ctx):
+def short_decisions(ledger):
     """Ban rut gon: toi da CONTEXT_DECISIONS_MAX decision, moi cai ANALYSIS_DECISION_SHORT_CHARS ky tu."""
     n = config.ANALYSIS_DECISION_SHORT_CHARS
-    confirmed = [d for d in ctx.ledger.decisions() if d.status == DecisionStatus.CONFIRMED]
+    confirmed = [d for d in ledger.decisions() if d.status == DecisionStatus.CONFIRMED]
     kept = sorted(confirmed, key=_decision_rank)[:config.CONTEXT_DECISIONS_MAX]
     texts = [f"- {d.text}" for d in kept]
     lines = [t if len(t) <= n else t[:n - 1] + "…" for t in texts]
     if len(kept) < len(confirmed):
         lines.append(f"({len(confirmed) - len(kept)} less important decisions omitted)")
     return "\n".join(lines) or "(none)"
+
+
+def _short_decisions(ctx):
+    return short_decisions(ctx.ledger)
 
 
 def _step_prompt(ctx, q, results_by_key, feedback):
@@ -690,13 +696,6 @@ def print_summary(ctx):
     print(f"Sổ kết quả và file: {ctx.ledger.root}")
 
 
-def synthesize(ctx, yes, ask_user):
-    """Khung pha tong hop. TODO Ngay 7: viet ket luan that thay cho bang ket qua."""
-    print_summary(ctx)
-    if not confirm("Chấp nhận kết luận?", yes, ask_user):
-        raise StopLoop("Người dùng chưa chấp nhận kết luận.")
-
-
 # ---------- CLI ----------
 
 def run_loop(task, **kwargs):
@@ -726,7 +725,22 @@ json.dump(meta, open(os.environ["AGENT_META_PATH"], "w", encoding="utf-8"))
     step = {"explanation": "Đếm dòng từng file CSV.", "method": "pandas read_csv, len", "code": code,
             "can_be_wrong_if": ["Không có file CSV nào"], "output_files": ["demo_row_counts.csv"]}
     restatement = {"restatement": "Demo: đếm số dòng từng bảng.", "goals": ["Số dòng của từng bảng"]}
-    return llm.FakeLLM(by_schema={ProblemRestatement: restatement, AnalysisPlan: plan, AnalysisStep: step})
+    return llm.FakeLLM(by_schema={ProblemRestatement: restatement, AnalysisPlan: plan, AnalysisStep: step,
+                                  SynthesisOutput: demo_synthesis})
+
+
+def demo_synthesis(messages):
+    """Tra loi gia cho prompt tong hop: doc id ket qua va so yeu cau tu chinh prompt, vi id doi sau --restart.
+    Moi yeu cau mot insight, trich ket qua dau tien va khoa dau tien cua no."""
+    prompt = messages[0]["content"]
+    first = re.search(r"^(R\d+) \|.*\| result_summary: (\{.*\}) \|", prompt, re.M)
+    rid = first[1] if first else None
+    keys = list(json.loads(first[2])) if first else []
+    text = f"Demo: kết quả {rid} ghi nhận {{{{{rid}.{keys[0]}}}}}." if keys else "Demo: chưa trả lời được, không có số."
+    insights = [{"id": f"I{i}", "requirement": int(n), "text": text, "result_ids": [rid] if rid else []}
+                for i, n in enumerate(re.findall(r"^\[(\d+)\] ", prompt, re.M), 1)]
+    return {"summary": "Demo: đếm số dòng từng bảng.", "insights": insights, "conclusion": "Demo: không có khuyến nghị.",
+            "limitations": "Demo: kịch bản giả lập, không phải phân tích thật."}
 
 
 def main(argv=None):

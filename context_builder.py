@@ -5,7 +5,7 @@ model cua role, chua bien PROMPT_MARGIN, vi model nao trong chuoi cung co the ph
 
 PROMPT_CUTS khai bao cua moi prompt: bien nao cat duoc, theo thu tu nao. De goc, cau hoi hien tai, contract
 (NEVER_CUT) khong bao gio cat. Bac cuoi la data_summary: goi lai build_data_summary voi max_chars nho dan, de van qua
-cac muc cat va luoi an toan che gia tri, khong cat chuoi tho. Prompt report/slide lam o Ngay 7.
+cac muc cat va luoi an toan che gia tri, khong cat chuoi tho.
 """
 
 import math
@@ -13,12 +13,14 @@ import math
 import config
 from profiling.data_summary import build_data_summary
 
-NEVER_CUT = ("problem", "question", "contract")
+NEVER_CUT = ("problem", "question", "contract", "requirements")
 SUMMARY = "data_summary"
 PROMPT_CUTS = {
     "understand": ("previous_restatement", "user_corrections"),
     "plan": ("confirmed_understanding", SUMMARY),
     "step": ("previous_results", "error_feedback", "confirmed_decisions", "confirmed_understanding", SUMMARY),
+    # ban rut gon cua results chi bo method, result_summary van du khoa va gia tri; error_feedback khong cat
+    "synthesize": ("previous_answer", "quality_flags", "confirmed_decisions", "results"),
 }
 
 

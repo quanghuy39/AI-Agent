@@ -17,6 +17,7 @@ from llm import LLMChainExhausted, structured
 from profiling import quality
 from runner import run_code as runner
 from skills.analysis.schemas import AnalysisPlan, SubQuestion
+from skills.report.schemas import SynthesisOutput
 from storage import r2
 
 TASK = "baiL"
@@ -95,11 +96,13 @@ def env(tmp_path, monkeypatch):
 
 
 def run(script, **kw):
-    fake = llm.FakeLLM({"analysis": [RESTATEMENT, *script]})  # pha understand goi AI truoc ke hoach
+    fake = llm.FakeLLM({"analysis": [RESTATEMENT, *script]},  # pha understand goi AI truoc ke hoach
+                       by_schema={SynthesisOutput: loop.demo_synthesis})
     kw.setdefault("yes", True)
     kw.setdefault("sensitive", ["CUSTOMER.customer_id"])
     with llm.use_fake(fake):
         code = loop.run_loop(TASK, **kw)
+    fake.all_calls, fake.calls = fake.calls, [c for c in fake.calls if c["role"] == "analysis"]  # tong hop xet rieng
     return code, fake
 
 
@@ -125,14 +128,14 @@ def test_success_two_questions_with_dependency(env):
     assert r1.code_file == "code/R1_Q1.py" and r2_.code_file == "code/R2_Q2.py"
     assert r1.output_path == "work/q1.csv" and all(c.status.value == "pass" for c in r1.checks + r2_.checks)
     decisions = led.decisions()
-    assert len(decisions) == 2 and all(d.status.value == "confirmed" for d in decisions)
+    assert len(decisions) == 3 and all(d.status.value == "confirmed" for d in decisions)  # ca chap nhan ket luan
     assert "ORDERS.amount: >= 0" in decisions[1].text
     assert all(c["task_id"] == TASK and c["role"] == "analysis" for c in fake.calls)
     step2_prompt = prompts(fake)[3]
     assert "D1 [metric_definition]" in step2_prompt and "q1.csv" in step2_prompt and "R1" in step2_prompt
     actions = [e.action for e in led.read_log() if e.step == "analysis"]
     assert actions[0] == "load_context" and "plan" in actions and actions[-1] == "done"
-    assert sum(1 for e in led.read_log() if e.step == "llm") == 4  # usage cua FakeLLM vao run_log
+    assert sum(1 for e in led.read_log() if e.step == "llm") == 5  # usage cua FakeLLM vao run_log, ca luot tong hop
 
 
 # (b) loi runner roi sua duoc

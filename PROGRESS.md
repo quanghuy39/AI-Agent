@@ -1,6 +1,6 @@
 # PROGRESS
 
-Cập nhật: 30/10/2026. Nguồn: git log, code trong repo, tóm tắt cuối ngày của người dùng.
+Cập nhật: 31/10/2026. Nguồn: git log, code trong repo, tóm tắt cuối ngày của người dùng.
 
 ## Trạng thái theo ngày
 
@@ -12,7 +12,7 @@ Cập nhật: 30/10/2026. Nguồn: git log, code trong repo, tóm tắt cuối n
 | 4 | Xong | `profiling/` (quality, dictionary, flags, relationships, data_summary), `validators/`, khoảng hợp lệ trong dictionary; `tests.grade_bai0b` đạt 5/5 lỗi cài sẵn. 476 test pass. |
 | 5 | Xong | Runner, skill phân tích, meta_grader, `analysis.loop`, fit_prompt, bộ kiểm định theo skill thật; chốt chuỗi analysis. Bài 0a ĐẠT toàn bộ; bài 1 chạy trọn 4 câu, số liệu đúng, phán đoán BI chưa đạt. 645 test pass. |
 | 6 | Xong | Điều phối theo pha, chạy tiếp được, `--fake` tách hồ sơ, điểm dừng xác nhận, decision pending và superseded, cờ chất lượng thành decision, `context_builder`, đồng bộ hồ sơ lên R2, 5 quy tắc chung trong prompt, `tests.grade <bài>`. Bài 2 chạy thật: số tổng hợp khớp, phán đoán BI chưa đạt. 858 test pass. |
-| 7 | Chưa | Phạm vi chưa xác nhận (thư mục `report/`, `slides/` mới có `__init__.py`). Xem "Lưu ý Ngày 7". |
+| 7 | Đang làm | Kiểm định report, chốt chuỗi report. Mục 1: pha synthesize (`report/`, `skills/report/`), mới kiểm bằng FakeLLM. `slides/` mới có `__init__.py`. |
 | 8 | Chưa | Phạm vi chưa xác nhận. Xem "Lưu ý Ngày 8". |
 
 ## Ngày 5
@@ -113,7 +113,7 @@ Mục 1, điều phối theo pha:
 - Pha understand: `skills/analysis/understand.md`, schema `ProblemRestatement`; không đồng ý thì gõ chỉnh sửa, gọi lại AI
   tối đa 3 lần sau lần đầu (`ANALYSIS_UNDERSTAND_MAX_RETRIES`); bản đã xác nhận ở `problem.json`, là đầu vào của pha plan.
 - `load_context` chạy trước understand vì đề gửi AI cần tập giá trị che lấy từ profile; pha explore chỉ in tổng quan.
-- Pha synthesize mới là khung (bảng kết quả + một xác nhận), TODO Ngày 7.
+- Pha synthesize lúc đó mới là khung; Ngày 7 mục 1 đã làm thật.
 - `--sensitive`: chốt vào state ở lần chạy đầu (gồm cả mặc định của bài), chạy tiếp dùng state, truyền khác thì dừng và
   gợi ý `--restart`; `--restart` không kèm `--sensitive` thì giữ danh sách cũ, không âm thầm bỏ che.
 - `--restart`: kết quả valid thành superseded, `output_path` trỏ chỗ mới, toàn bộ file `work/` sang
@@ -236,6 +236,44 @@ quả, decision cũ vẫn confirmed nên được dùng lại theo `source_key` 
 - `tests/grade.py` bỏ decision superseded khi đối chiếu bẫy, để decision của lần làm trước không tính là ĐÃ NÊU.
 - Thay hành vi cũ: `--restart` trước đây giữ nguyên decisions và không hỏi lại. 5 test cũ khóa hành vi đó đã sửa theo.
 
+## Ngày 7
+
+Mục 1, pha synthesize (kiểm bằng FakeLLM, CHƯA gọi AI thật):
+- `skills/report/`: `synthesize.md`, `schemas.py` (SynthesisOutput, Insight, InsightRecord, SynthesisRecord), `__init__.py`.
+- `report/placeholders.py`: `find_placeholders`, `format_value`, `fill`, `validate_synthesis`, `assign_label`. Code điền số,
+  định dạng kiểu Việt Nam, không đổi tỷ lệ sang phần trăm.
+- `report/synthesize.py`: dựng prompt qua `context_builder` (role report, `prompt_fit`), gọi AI, kiểm tra, gửi lại tối đa
+  2 lần kèm danh sách lỗi và câu trả lời trước; vẫn sai thì open_item, dừng mã 3, không ghi `insights.json`. Hết chuỗi: mã 2.
+- `main.py`: `_phase_synthesize` in insight theo yêu cầu, hỏi "Chấp nhận kết luận?" (luôn dừng), `--yes` tự xác nhận. `n`:
+  bản tổng hợp sang `_superseded/` ở gốc hồ sơ, giữ pha synthesize, chạy lại gọi AI lần nữa. `--restart` cũng chuyển
+  `insights.json` sang đó. `insights.json` còn đó (ngắt giữa chừng) thì chạy lại chỉ hỏi lại, không gọi AI.
+- Khung `loop.synthesize` đã bỏ. `FakeLLM` nhận phần tử là hàm (`demo_synthesis` đọc id kết quả từ prompt vì id đổi sau
+  `--restart`). `loop._short_decisions` tách thành `short_decisions(ledger)` để dùng lại, hành vi không đổi.
+- Quyết định khác yêu cầu ban đầu:
+  - Danh sách yêu cầu lấy từ `state.plan.requirements` (khớp số `covers`), fallback `restatement.goals`, vì `problem.json`
+    không có danh sách yêu cầu.
+  - `use_cache=False`: cache trả lại đúng câu cũ nên từ chối hoặc sai hết lần rồi chạy lại sẽ không đổi được gì.
+  - `task_id` là `<bài>/report`, tách khỏi model analysis gắn theo `<bài>`.
+  - Thêm phép kiểm dấu %: chỉ hợp lệ ngay sau trường có `pct`/`percent`. Không có phép kiểm này thì
+    `{{R7.best_channel_conv_rate}}%` ra "0,05%", sai 100 lần.
+  - Placeholder trong summary, conclusion, limitations phải trỏ kết quả đã được ít nhất một insight trích dẫn.
+  - Insight không có `result_ids` được phép (yêu cầu chưa trả lời được), nhãn luôn hypothesis.
+  - Khóa `result_summary` chỉ một cấp: `AgentMeta` không cho dict con và hồ sơ thật đều phẳng.
+  - Decision "chấp nhận kết luận" dùng kind `assumption`, `source_key` cố định `accept_conclusion|synthesize`.
+- Độ dài prompt (ước lượng, chưa cắt gì, ngân sách 27.000 token): khung 2.110 ký tự ~1.321 token; `bai0a` 3.224 ký tự ~1.649
+  token; `bai2` 9.803 ký tự ~3.584 token. `bai2` lọt ngân sách 4.500 của groq ở lần gọi đầu; lần gửi lại dài hơn vì kèm câu trả
+  lời trước.
+
+Sửa sau lần làm đầu của mục 1:
+- Định dạng số: |x| >= 1 tối đa `REPORT_MAX_DECIMALS` chữ số thập phân; 0 < |x| < 1 theo `REPORT_SIG_DIGITS` chữ số có
+  nghĩa, để `bai2` R7 in 0,0513 và 0,0519 thay vì đều là 0,05.
+- Nhãn verified xét cả chuỗi `depends_on` bắc cầu: kết quả phụ thuộc thiếu, không valid hoặc có check chưa pass thì thành
+  hypothesis.
+
+Giới hạn của mục 1:
+- Đồng bộ R2 không xóa: `insights.json` cũ trên R2 còn đó tới khi có bản mới ghi đè.
+- Hồ sơ `bai2` đang `done`, chưa có `insights.json`, muốn tổng hợp phải `--restart` hoặc sửa tay `state.json`.
+
 ## Quyết định đã chốt
 - Prompt analysis trong `skills/analysis/` là nguồn duy nhất cho cả bộ kiểm định lẫn agent: kiểm định đo đúng
   prompt sẽ dùng thật.
@@ -255,9 +293,8 @@ quả, decision cũ vẫn confirmed nên được dùng lại theo `source_key` 
   `LLMConfigError`. Nội dung chính xác của mục 6.7 nằm trong tài liệu thiết kế ngoài repo (chưa đối chiếu nguyên văn).
 
 ## Lưu ý Ngày 7
-- Chuỗi report/slide có trần groq 5.000 token (ngân sách 4.500), nhỏ hơn prompt cỡ `step`, nên khi dùng lại ngữ cảnh này
-  sẽ phải cắt. Prompt report/slide chưa viết.
-- Pha synthesize mới là khung.
+- Chuỗi slide có trần groq 5.000 token (ngân sách 4.500), nhỏ hơn prompt cỡ `step`, nên khi dùng lại ngữ cảnh này sẽ phải
+  cắt. Prompt slide chưa viết.
 - `findings.json` không superseded khi `--restart`: phát hiện của kết quả cũ còn nguyên, `tests/grade.py` vẫn đối chiếu
   với chúng.
 
@@ -274,6 +311,8 @@ quả, decision cũ vẫn confirmed nên được dùng lại theo `source_key` 
   sinh ra từ báo sai): chạy thật phải dùng `python main.py bai0a --restart`.
 
 ## Backlog
+- `validate_synthesis` không chặn được số viết bằng chữ.
+- `validate_synthesis` không chặn `Q<số>` dùng với nghĩa quý: dạng đó trùng mã định danh của câu hỏi.
 - `data_profile.json` chứa dòng mẫu thô, kể cả cột che, và được đồng bộ lên `output/` của bucket: cần bỏ trước khi dùng dữ
   liệu công ty hoặc chia sẻ output.
 - `runner.OUTPUT_DIR` và `quality.OUTPUT_DIR` đang đổi tạm biến toàn cục cho `--fake`; nên truyền tham số.
