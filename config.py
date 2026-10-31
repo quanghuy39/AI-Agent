@@ -124,6 +124,21 @@ CONTEXT_DECISIONS_MAX = 15           # khi phai cat: so decision giu lai
 REPORT_SYNTH_MAX_RETRIES = 2         # so lan gui lai AI kem danh sach loi, sau lan dau
 REPORT_FEEDBACK_MAX_ERRORS = 20      # so loi toi da trong moi lan gui lai
 REPORT_TABLE_MAX_COLUMNS = 40        # so ten cot toi da cua moi bang ket qua dua vao prompt
+REPORT_TABLE_SHOW_COLUMNS = 6        # so cot toi da AI chon hien thi cho mot bang
+REPORT_SUBDIR = "report"             # trong output/<bai>/: bieu do, Word, ho so, slides_outline
+REPORT_FONT = "Times New Roman"
+# Bieu do (Ngay 7)
+REPORT_CHART_FONT_FALLBACK = "DejaVu Sans"  # khi may khong co REPORT_FONT (vd. container); co du dau tieng Viet
+REPORT_CHART_DPI = 200
+REPORT_CHART_SIZE = (10, 5.625)      # inch, ty le 16:9
+REPORT_CHART_MAX_Y = 4               # so cot so toi da cua mot bieu do
+REPORT_CHART_MAX_GROUPS = 20         # nhieu hon so nhom nay thi chi ve REPORT_CHART_TOP_GROUPS nhom lon nhat
+REPORT_CHART_TOP_GROUPS = 15
+REPORT_CHART_LABEL_MAX_BARS = 15     # bar: nhieu cot hon thi bo nhan gia tri; line: so nhan toi da tren truc x
+REPORT_CHART_VERTICAL_MAX_GROUPS = 10   # nhieu nhom hon thi ve cot ngang
+REPORT_CHART_VERTICAL_MAX_CHARS = 12    # nhan nhom dai hon thi ve cot ngang
+# Bang mau theo thu tu co dinh, 8 mau; dai thu 9 tro di gop vao "Khác"
+REPORT_CHART_PALETTE = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948")
 REPORT_MAX_DECIMALS = 2              # so chu so thap phan toi da khi dien so co |x| >= 1 vao van ban
 REPORT_SIG_DIGITS = 3                # so chu so co nghia khi dien so co 0 < |x| < 1 (ty le nho khong bi lam tron mat)
 REPORT_PERCENT_FIELD_HINTS = ("pct", "percent")  # ten truong chua mot tu nay moi duoc viet % phia sau

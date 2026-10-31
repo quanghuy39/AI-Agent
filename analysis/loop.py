@@ -807,7 +807,7 @@ counts = {}
 for name in sorted(os.listdir(inp)):
     if name.lower().endswith(".csv"):
         counts[name.rsplit(".", 1)[0]] = len(pd.read_csv(os.path.join(inp, name), dtype=str))
-pd.Series(counts, name="rows").to_csv(os.path.join(out, "demo_row_counts.csv"))
+pd.Series(counts, name="rows").rename_axis("table").to_csv(os.path.join(out, "demo_row_counts.csv"))
 meta = {"result_summary": {"n_tables": len(counts), "total_rows": int(sum(counts.values()))},
         "checks": [{"type": "custom", "name": "có bảng", "passed": len(counts) > 0, "reason": f"{len(counts)} bảng"}]}
 json.dump(meta, open(os.environ["AGENT_META_PATH"], "w", encoding="utf-8"))
@@ -817,6 +817,9 @@ json.dump(meta, open(os.environ["AGENT_META_PATH"], "w", encoding="utf-8"))
     restatement = {"restatement": "Demo: đếm số dòng từng bảng.", "goals": ["Số dòng của từng bảng"]}
     return llm.FakeLLM(by_schema={ProblemRestatement: restatement, AnalysisPlan: plan, AnalysisStep: step,
                                   SynthesisOutput: demo_synthesis})
+
+
+DEMO_TABLE = "demo_row_counts.csv"
 
 
 def demo_synthesis(messages):
@@ -829,8 +832,12 @@ def demo_synthesis(messages):
     text = f"Demo: kết quả {rid} ghi nhận {{{{{rid}.{keys[0]}}}}}." if keys else "Demo: chưa trả lời được, không có số."
     insights = [{"id": f"I{i}", "requirement": int(n), "text": text, "result_ids": [rid] if rid else []}
                 for i, n in enumerate(re.findall(r"^\[(\d+)\] ", prompt, re.M), 1)]
+    if DEMO_TABLE in prompt and insights:  # bang cua demo_fake: co cot so that de ve va dua vao bao cao
+        insights[0]["table"] = {"file": DEMO_TABLE, "columns": ["table", "rows"]}
+        insights[0]["chart"] = {"type": "bar", "file": DEMO_TABLE, "x": "table", "y": ["rows"], "title": "Số dòng theo bảng"}
     return {"summary": "Demo: đếm số dòng từng bảng.", "insights": insights, "conclusion": "Demo: không có khuyến nghị.",
-            "limitations": "Demo: kịch bản giả lập, không phải phân tích thật."}
+            "limitations": "Demo: kịch bản giả lập, không phải phân tích thật.",
+            "column_labels": {"table": "Bảng", "rows": "Số dòng"}}
 
 
 def main(argv=None):

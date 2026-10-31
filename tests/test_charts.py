@@ -1,0 +1,243 @@
+"""Kiem tra phan table/chart cua ban tong hop va ve bieu do. FakeLLM, du lieu gia, khong goi that.
+
+Chay: python -m pytest tests/test_charts.py -v
+"""
+
+import pandas as pd
+import pytest
+from matplotlib import font_manager
+from PIL import Image
+
+import config
+import llm
+from analysis import loop
+from ledger import Ledger, Phase
+from report.charts import ChartError, _font, _frame, _limit, _number, draw_chart, draw_charts, validate_visuals
+from report.synthesize import synthesize
+from skills.report.schemas import ChartSpec, SynthesisOutput
+
+TASK = "bai0a"
+PASS = [{"name": "c", "status": "pass"}]
+CHART = {"type": "bar", "file": "by_group.csv", "x": "group", "y": ["total"], "title": "Doanh thu theo nhóm"}
+TABLE = {"file": "by_group.csv", "columns": ["group", "total"]}
+
+
+@pytest.fixture
+def led(tmp_path):
+    ledger = Ledger(tmp_path / "output" / TASK)
+    ledger.set_state(Phase.SYNTHESIZE, plan={"requirements": ["Doanh thu"]})
+    ledger.set_problem({"problem": "Đề."})
+    work = ledger.root / "work"
+    work.mkdir()
+    pd.DataFrame({"group": ["A", "B", "C"], "total": [1200, 3400.5, 90], "rate": [0.1, 0.2, 0.3],
+                  "note": ["x", "y", "z"]}).to_csv(work / "by_group.csv", index=False)
+    pd.DataFrame({"group": ["A", "A", "B", "B"], "brand": ["X", "Y", "X", "Y"],
+                  "n": [1, 2, 3, 4]}).to_csv(work / "by_brand.csv", index=False)
+    pd.DataFrame({"month": [f"T{i}" for i in range(30)], "n": range(30), "m": range(30)}).to_csv(work / "month.csv", index=False)
+    ledger.add_result("Bảng?", "m", {"n": 3}, PASS, question_key="Q1",
+                      output_path="work/by_group.csv; work/by_brand.csv; work/month.csv")
+    ledger.add_result("Khác?", "m", {"n": 3}, PASS, question_key="Q2")
+    return ledger
+
+
+def output(chart=None, table=None, result_ids=("R1",), labels=None):
+    insight = {"id": "I1", "requirement": 1, "text": "x", "result_ids": list(result_ids), "chart": chart, "table": table}
+    return SynthesisOutput.model_validate({"summary": "s", "insights": [insight], "conclusion": "c", "limitations": "l",
+                                           "column_labels": labels or {}})
+
+
+def chart_errors(led, **changes):
+    return validate_visuals(output(chart={**CHART, **changes}), led)
+
+
+# B1: kiem tra
+def test_good_table_and_chart_have_no_errors(led):
+    assert validate_visuals(output(CHART, TABLE, labels={"group": "Nhóm"}), led) == []
+
+
+def test_no_table_no_chart_has_no_errors(led):
+    assert validate_visuals(output(), led) == []
+
+
+def test_file_must_belong_to_cited_result(led):
+    errors = validate_visuals(output(CHART, TABLE, result_ids=["R2"]), led)
+    assert len(errors) == 2 and all("by_group.csv không thuộc bảng của result_ids" in e for e in errors)
+
+
+def test_unknown_file(led):
+    assert "file khac.csv không thuộc" in chart_errors(led, file="khac.csv")[0]
+
+
+def test_invalid_type(led):
+    assert chart_errors(led, type="pie") == ["I1.chart: type pie không hợp lệ; chỉ dùng bar, line, stacked_bar."]
+
+
+def test_missing_columns(led):
+    assert "không có cột khong_co" in chart_errors(led, x="khong_co")[0]
+    assert "không có cột khong_co" in chart_errors(led, y=["khong_co"])[0]
+
+
+def test_y_must_be_numeric(led):
+    assert chart_errors(led, y=["note"]) == ["I1.chart: cột note không phải cột số."]
+
+
+@pytest.mark.parametrize("y", [[], ["total", "rate", "total", "rate", "total"]])
+def test_y_count(led, y):
+    assert any("y cần từ một tới" in e for e in chart_errors(led, y=y))
+
+
+def test_series_only_for_stacked_bar(led):
+    assert any("series chỉ dùng cho stacked_bar" in e for e in chart_errors(led, series="note"))
+
+
+def test_series_needs_single_y(led):
+    errors = chart_errors(led, type="stacked_bar", series="note", y=["total", "rate"])
+    assert "I1.chart: có series thì y chỉ gồm một cột." in errors
+
+
+@pytest.mark.parametrize("title", ["Năm 2024", "", "{{R1.n}}"])
+def test_title_without_digits(led, title):
+    assert any("title phải có chữ" in e for e in chart_errors(led, title=title))
+
+
+def test_duplicate_x_is_rejected_not_summed(led):
+    errors = chart_errors(led, file="by_brand.csv", x="group", y=["n"])
+    assert any("code không tự cộng gộp" in e for e in errors)
+    assert chart_errors(led, file="by_brand.csv", x="group", y=["n"], type="stacked_bar", series="brand") == []
+
+
+def test_masked_x_counts_as_duplicate(led):
+    out = output({**CHART})
+    assert any("giá trị trùng" in e for e in validate_visuals(out, led, mask=lambda s: "[đã che]"))
+
+
+def test_table_columns_exist_and_capped(led):
+    bad = validate_visuals(output(table={"file": "by_group.csv", "columns": ["khong_co"]}), led)
+    assert bad == ["I1.table: không có cột khong_co trong by_group.csv."]
+    many = validate_visuals(output(table={"file": "by_group.csv", "columns": ["group"] * 7}), led)
+    assert many == ["I1.table: columns cần từ một tới 6 cột."]
+
+
+def test_label_with_digit_rejected(led):
+    assert validate_visuals(output(labels={"total": "Tổng 2024"}), led) == ["column_labels: nhãn của total có chữ số."]
+
+
+def test_visual_error_goes_back_to_ai(led):
+    good = {"summary": "s", "insights": [{"id": "I1", "requirement": 1, "text": "x", "result_ids": ["R1"], "chart": CHART}],
+            "conclusion": "c", "limitations": "l"}
+    bad = {**good, "insights": [{**good["insights"][0], "chart": {**CHART, "type": "pie"}}]}
+    fake = llm.FakeLLM({"report": [bad, good]})
+    with llm.use_fake(fake):
+        record = synthesize(led, TASK)
+    assert len(fake.calls) == 2 and "type pie không hợp lệ" in fake.calls[1]["messages"][0]["content"]
+    assert record["insights"][0]["chart"]["type"] == "bar"
+
+
+def test_visuals_stop_after_three_wrong_answers(led):
+    bad = {"summary": "s", "insights": [{"id": "I1", "requirement": 1, "text": "x", "result_ids": ["R1"],
+                                         "chart": {**CHART, "type": "pie"}}], "conclusion": "c", "limitations": "l"}
+    with llm.use_fake(llm.FakeLLM({"report": [bad] * 3})), pytest.raises(loop.StopLoop):
+        synthesize(led, TASK)
+    assert led.get_insights() is None
+
+
+# B2: ve
+def png_of(led, spec, name="out.png", labels=None, mask=str):
+    out = led.root / "report" / "charts" / name
+    draw_chart(ChartSpec.model_validate(spec), led.root / "work" / spec["file"], out, labels, mask)
+    return out
+
+
+@pytest.mark.parametrize("spec", [
+    CHART,
+    {**CHART, "type": "line"},
+    {**CHART, "y": ["total", "rate"]},
+    {"type": "stacked_bar", "file": "by_brand.csv", "x": "group", "y": ["n"], "series": "brand", "title": "Theo nhóm"},
+    {"type": "stacked_bar", "file": "by_group.csv", "x": "group", "y": ["total", "rate"], "title": "Hai cột"},
+    {"type": "line", "file": "month.csv", "x": "month", "y": ["n", "m"], "title": "Theo tháng"},
+], ids=["bar", "line", "grouped", "stacked_series", "stacked_columns", "line_long"])
+def test_draws_png_200dpi_16_9(led, spec):
+    with Image.open(png_of(led, spec)) as image:
+        assert image.size == (2000, 1125)
+        assert round(image.info["dpi"][0]) == 200
+
+
+def test_draw_charts_saves_by_insight_id_and_skips_no_chart(led):
+    record = {"column_labels": {"group": "Nhóm"},
+              "insights": [{"id": "I1", "result_ids": ["R1"], "chart": CHART}, {"id": "I2", "result_ids": [], "chart": None}]}
+    drawn = draw_charts(record, led)
+    assert drawn == {"I1": led.root / "report" / "charts" / "I1.png"} and drawn["I1"].is_file()
+
+
+def test_draw_charts_missing_file_raises(led):
+    (led.root / "work" / "by_group.csv").unlink()
+    record = {"insights": [{"id": "I1", "result_ids": ["R1"], "chart": CHART}]}
+    with pytest.raises(ChartError, match="không tìm thấy bảng by_group.csv"):
+        draw_charts(record, led)
+
+
+def test_draw_charts_old_record_without_chart_key(led):
+    assert draw_charts({"insights": [{"id": "I1", "result_ids": []}]}, led) == {}
+
+
+def spec_of(**changes):
+    return ChartSpec.model_validate({**CHART, **changes})
+
+
+def test_number_format_is_vietnamese():
+    assert [_number(v) for v in (1250000.0, 3400.5, 0.0513, 0.0)] == ["1.250.000", "3.400,5", "0,0513", "0"]
+
+
+def test_more_than_twenty_groups_keeps_top_fifteen_with_note():
+    df = pd.DataFrame({"group": [f"N{i}" for i in range(25)], "total": range(25)})
+    frame, note = _limit(_frame(df, spec_of(), {}, str), spec_of(), "Tổng")
+    assert list(frame.index) == [f"N{i}" for i in range(24, 9, -1)] and note == "Hiển thị 15/25 nhóm lớn nhất theo Tổng."
+
+
+def test_twenty_groups_are_all_kept():
+    df = pd.DataFrame({"group": [f"N{i}" for i in range(20)], "total": range(20)})
+    frame, note = _limit(_frame(df, spec_of(), {}, str), spec_of(), "Tổng")
+    assert len(frame) == 20 and note == ""
+
+
+def test_line_keeps_every_point():
+    df = pd.DataFrame({"group": [f"T{i}" for i in range(37)], "total": range(37)})
+    spec = spec_of(type="line")
+    frame, note = _limit(_frame(df, spec, {}, str), spec, "Tổng")
+    assert len(frame) == 37 and note == ""
+
+
+def test_series_beyond_palette_fold_into_other():
+    rows = [("A", f"S{i}", 10 - i) for i in range(10)]
+    df = pd.DataFrame(rows, columns=["group", "brand", "n"])
+    spec = spec_of(type="stacked_bar", series="brand", y=["n"])
+    frame, note = _limit(_frame(df, spec, {}, str), spec, "n")
+    assert frame.shape[1] == len(config.REPORT_CHART_PALETTE) and frame["Khác"].iloc[0] == 3 + 2 + 1
+    assert frame.sum(axis=1).iloc[0] == sum(r[2] for r in rows) and "gộp vào Khác" in note
+
+
+def test_frame_uses_labels_and_keeps_file_order():
+    df = pd.DataFrame({"group": ["B", "A"], "total": [1, 2]})
+    frame = _frame(df, spec_of(), {"total": "Tổng tiền"}, str)
+    assert list(frame.index) == ["B", "A"] and list(frame.columns) == ["Tổng tiền"]
+
+
+def test_frame_masks_group_names():
+    df = pd.DataFrame({"group": ["BIMAT", "A"], "total": [1, 2]})
+    assert list(_frame(df, spec_of(), {}, lambda s: s.replace("BIMAT", "[đã che]")).index) == ["[đã che]", "A"]
+
+
+def test_font_falls_back_without_times(monkeypatch):
+    monkeypatch.setattr(font_manager.fontManager, "ttflist", [font_manager.FontEntry(name="DejaVu Sans")])
+    assert _font() == "DejaVu Sans"
+
+
+def test_font_prefers_times(monkeypatch):
+    monkeypatch.setattr(font_manager.fontManager, "ttflist", [font_manager.FontEntry(name="Times New Roman")])
+    assert _font() == "Times New Roman"
+
+
+def test_empty_table_raises(led):
+    pd.DataFrame({"group": [], "total": []}).to_csv(led.root / "work" / "by_group.csv", index=False)
+    with pytest.raises(ChartError):
+        png_of(led, CHART)

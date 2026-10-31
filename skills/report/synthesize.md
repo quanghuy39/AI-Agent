@@ -27,8 +27,12 @@ Trả về JSON gồm:
 - summary: tóm tắt ngắn toàn bài.
 - insights: danh sách nhận định. Mỗi nhận định có id (I1, I2, ...), requirement (số trong ngoặc vuông ở Requirements),
   text, result_ids (id các kết quả dùng làm căn cứ).
+  Tùy chọn trong mỗi insight, file lấy từ tables của kết quả trong result_ids:
+  table {file, columns: tối đa sáu cột}; chart {type: bar | line | stacked_bar, file, x, y: một tới bốn cột số, series: cột
+  nhóm chỉ cho stacked_bar, title: không có chữ số}. x (cùng series) không được trùng giữa các dòng.
 - conclusion: kết luận theo đúng câu hỏi của đề.
 - limitations: hạn chế của phân tích, gồm các decision và cờ chất lượng ảnh hưởng tới kết luận.
+- column_labels: {tên cột: nhãn tiếng Việt cho người đọc} của mọi cột dùng trong table, chart.
 
 # Quy tắc bắt buộc
 1. Mọi con số phải viết bằng placeholder {{Rx.field}}: x là id kết quả, field là khóa có thật trong result_summary của

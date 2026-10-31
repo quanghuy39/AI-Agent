@@ -14,6 +14,7 @@ import llm
 from analysis import loop
 from ledger import DecisionStatus, ResultStatus
 from profiling import flags as fl
+from report.charts import validate_visuals
 from report.placeholders import assign_label, fill, requirements_of, validate_synthesis
 from report.tables import result_tables
 from skills.report import render_prompt
@@ -120,7 +121,7 @@ def build_record(output, problem, results, model):
     return SynthesisRecord(summary=output.summary, summary_filled=fill(output.summary, valid), insights=insights,
                            conclusion=output.conclusion, conclusion_filled=fill(output.conclusion, valid),
                            limitations=output.limitations, limitations_filled=fill(output.limitations, valid),
-                           requirements=requirements_of(problem), model=model)
+                           column_labels=output.column_labels, requirements=requirements_of(problem), model=model)
 
 
 def synthesize(ledger, task, mask=str, flags=()):
@@ -137,7 +138,7 @@ def synthesize(ledger, task, mask=str, flags=()):
         text = _build_prompt(ledger, variables, shortened, mask)
         result = llm.ask_model([{"role": "user", "content": text}], role=ROLE, json_schema=SynthesisOutput,
                                task_id=f"{task}/{ROLE}", use_cache=False)
-        errors = validate_synthesis(result.data, problem, results)
+        errors = validate_synthesis(result.data, problem, results) + validate_visuals(result.data, ledger, mask)
         ledger.log_event("report", "synthesize_attempt", inputs={"attempt": attempt},
                          status="retry" if errors else "ok",
                          extra={"model": result.model_key, "n_errors": len(errors), "errors": [mask(e) for e in errors]})
