@@ -277,6 +277,23 @@ def test_default_sort_descending_by_only_number(led):
     assert first_column(led, SHUFFLED[["group", "total"]]) == ["B", "A", "C"]
 
 
+@pytest.mark.parametrize("labels", [["group", "brand"], ["category_id", "group", "brand"]])
+def test_default_keeps_file_order_with_two_text_columns(led, labels):
+    frame = SHUFFLED[["total"]].assign(**{name: ["X", "Y", "Z"] for name in labels})[[*labels, "total"]]
+    assert first_column(led, frame) == ["X", "Y", "Z"]
+
+
+def test_explicit_sort_wins_on_two_text_columns(led):
+    frame = SHUFFLED.assign(brand=["P", "Q", "R"])[["group", "brand", "total"]]
+    assert first_column(led, frame, sort={"by": "total"}) == ["B", "A", "C"]
+
+
+@pytest.mark.parametrize("codes, expected", [(["C2", "C3", "C1"], ["C3", "C2", "C1"]), ([2, 3, 1], ["3", "2", "1"])])
+def test_default_sort_code_and_name_count_as_one_label(led, codes, expected):
+    frame = SHUFFLED.assign(category_id=codes)[["category_id", "group", "total"]]
+    assert first_column(led, frame) == expected
+
+
 def test_default_keeps_file_order_with_two_numbers(led):
     assert first_column(led, SHUFFLED) == ["A", "B", "C"]
 

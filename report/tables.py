@@ -30,6 +30,14 @@ def is_time_column(name, column):
     return is_datetime64_any_dtype(column) or name_has(name, config.REPORT_TIME_COLUMN_HINTS)
 
 
+def label_column(columns):
+    """Cot nhan: mot cot chu, hoac ma + ten thi lay ten. Hai cot chu khac (bang nhieu chieu) -> None."""
+    if len(columns) == 1:
+        return columns[0]
+    names = [c for c in columns if not name_has(c, config.REPORT_CODE_COLUMN_HINTS)]
+    return names[0] if len(columns) == 2 and len(names) == 1 else None
+
+
 def _read_csv(path, **kwargs):
     fmt = r2.detect_csv_format(path)
     return pd.read_csv(path, sep=fmt["delimiter"], encoding=fmt["encoding"], **kwargs)

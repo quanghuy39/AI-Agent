@@ -23,7 +23,7 @@ from ledger import DecisionStatus, ResultStatus
 from profiling import flags as fl
 from report.charts import _label, tables_of
 from report.placeholders import HYPOTHESIS, VERIFIED, format_value
-from report.tables import is_measure, is_time_column, load_table
+from report.tables import is_measure, is_time_column, label_column, load_table
 
 # decision chap nhan ket luan: co dinh, moi lan tu choi roi tong hop lai dung chung; khong phai gia dinh phan tich
 CONCLUSION_KEY = "accept_conclusion|synthesize"
@@ -173,13 +173,16 @@ def _cell_text(value, measure, mask):
 
 
 def _ordered(df, spec):
-    """Thu tu dong: theo sort cua AI; khong co thi giam dan theo cot so do duy nhat; co cot thoi gian thi giu thu tu file."""
+    """Thu tu dong: theo sort cua AI; khong co thi giam dan theo cot so do duy nhat. Co cot thoi gian hoac bang nhieu chieu
+    (nhom x thuong hieu) thi giu thu tu file, cac dong cung nhom dung canh nhau."""
     sort = spec.get("sort")
     if sort:
         return df.sort_values(sort["by"], ascending=not sort.get("desc", True), kind="stable")
     columns = spec["columns"]
     measures = [c for c in columns if is_measure(c, df[c])]
-    if len(measures) == 1 and not any(is_time_column(c, df[c]) for c in columns):
+    labels = [c for c in columns if c not in measures]
+    one_dimension = len(labels) < 2 or label_column(labels) is not None
+    if len(measures) == 1 and one_dimension and not any(is_time_column(c, df[c]) for c in columns):
         return df.sort_values(measures[0], ascending=False, kind="stable")
     return df
 

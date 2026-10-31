@@ -16,7 +16,7 @@ from pandas.api.types import is_bool_dtype, is_numeric_dtype
 import config
 from ledger import ResultStatus
 from report.placeholders import format_value
-from report.tables import is_measure, is_time_column, load_table, name_has, result_tables
+from report.tables import is_measure, is_time_column, label_column, load_table, result_tables
 from skills.report.schemas import ChartSpec
 
 CHART_TYPES = ("bar", "line", "stacked_bar")
@@ -170,14 +170,6 @@ def _limit(frame, spec, y_label):
 
 # ---------- bieu do du phong ----------
 
-def _label_column(columns):
-    """Cot nhan: mot cot chu, hoac ma + ten thi lay ten. Hai cot chu khac (bang nhieu chieu) -> None."""
-    if len(columns) == 1:
-        return columns[0]
-    names = [c for c in columns if not name_has(c, config.REPORT_CODE_COLUMN_HINTS)]
-    return names[0] if len(columns) == 2 and len(names) == 1 else None
-
-
 def auto_chart(ins, ledger, labels=None, mask=str):
     """Dac ta bar cho insight co table ma khong co chart; None neu bang khong du dieu kien: dung mot cot nhan (hoac ma +
     ten) va mot cot so, tu hai toi REPORT_AUTO_CHART_MAX_ROWS dong, nhan khong trung."""
@@ -187,7 +179,7 @@ def auto_chart(ins, ledger, labels=None, mask=str):
         return None
     df = load_table(table["path"])
     measures = [c for c in spec["columns"] if is_measure(c, df[c])]
-    x = _label_column([c for c in spec["columns"] if c not in measures])
+    x = label_column([c for c in spec["columns"] if c not in measures])
     if x is None or len(measures) != 1 or not 2 <= len(df) <= config.REPORT_AUTO_CHART_MAX_ROWS:
         return None
     if _keys(df[x], mask).duplicated().any():

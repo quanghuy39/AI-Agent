@@ -324,8 +324,8 @@ Sau lần chạy thật `bai0a` (số liệu đúng, đã xem Word):
   không `max_total_products` không còn được tính là số nhóm lớn nhất.
 - Biểu đồ dự phòng (`charts.auto_chart`, `with_auto_charts`): insight có table, không có chart, bảng một chiều, hai tới 20 dòng
   thì tự vẽ bar giảm dần, ghi sự kiện `auto_chart`. Chỉ thêm khi dựng báo cáo, `insights.json` không đổi.
-- Word: table có `sort` tùy chọn; không có thì giảm dần theo cột số duy nhất, trừ bảng có cột thời gian. Tối đa 40 dòng.
-  Hệ quả: bảng nhiều chiều có một cột số cũng xếp theo số, các dòng cùng nhóm không còn đứng cạnh nhau.
+- Word: table có `sort` tùy chọn; không có thì giảm dần theo cột số duy nhất, trừ bảng có cột thời gian và bảng nhiều chiều
+  (từ hai cột chữ, mã + tên tính là một): hai loại này giữ thứ tự file. Tối đa 40 dòng.
 - Word: đoạn insight, nhãn, tiêu đề bảng giữ cùng trang với bảng, hình; mọi dòng bảng không cắt ngang trang.
 - `validate_synthesis`: conclusion giống summary trên 80% thì gửi lại AI. Câu "Không có hạn chế đáng kể..." được phép có chữ số
   vì trùng nguyên văn `config.REPORT_NO_LIMITATIONS`.
