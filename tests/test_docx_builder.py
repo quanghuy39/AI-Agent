@@ -140,7 +140,7 @@ def test_body_text_and_labels(led):
 
 def test_captions_numbered(led):
     captions = styled(built(led), "Caption")
-    assert captions == ["Bảng 1: Nhóm hàng, year, Tổng tiền (kết quả R1)", "Hình 1: Tổng tiền theo Nhóm hàng"]
+    assert captions == ["Bảng 1: Nhóm hàng, year, Tổng tiền (kết quả R1)", "Hình 1: Tổng tiền theo nhóm hàng"]
 
 
 def test_sections_five_and_six_use_ledger(led):
@@ -595,7 +595,7 @@ def test_auto_chart_appears_in_word_and_outline(led):
     record = {**RECORD, "insights": [insight(1, 1, table=table), insight(2, 2)]}
     outputs = build_report(led, TASK, record, PROFILE)
     doc = docx.Document(outputs["docx"])
-    assert len(doc.inline_shapes) == 1 and "Hình 1: Tổng tiền theo Nhóm hàng" in styled(doc, "Caption")
+    assert len(doc.inline_shapes) == 1 and "Hình 1: Tổng tiền theo nhóm hàng" in styled(doc, "Caption")
     slides = json.loads(outputs["outline"].read_text(encoding="utf-8"))["slides"]
     assert slides[2]["chart"] == "report/charts/I1.png"
 

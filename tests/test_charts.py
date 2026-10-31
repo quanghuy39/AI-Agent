@@ -129,13 +129,26 @@ LABELS = {"n": "số sản phẩm", "m": "doanh thu", "group": "Nhóm hàng", "b
 
 
 @pytest.mark.parametrize("changes, title", [
-    ({"y": ["n"]}, "Số sản phẩm theo Nhóm hàng"),
-    ({"y": ["n", "m"], "type": "line"}, "Số sản phẩm, doanh thu theo Nhóm hàng"),
-    ({"y": ["n"], "type": "stacked_bar", "series": "brand"}, "Số sản phẩm theo Nhóm hàng và Thương hiệu"),
-    ({"y": ["khong_nhan"]}, "Khong_nhan theo Nhóm hàng"),
+    ({"y": ["n"]}, "Số sản phẩm theo nhóm hàng"),
+    ({"y": ["n", "m"], "type": "line"}, "Số sản phẩm, doanh thu theo nhóm hàng"),
+    ({"y": ["n"], "type": "stacked_bar", "series": "brand"}, "Số sản phẩm theo nhóm hàng và thương hiệu"),
+    ({"y": ["khong_nhan"]}, "Khong_nhan theo nhóm hàng"),
 ])
 def test_chart_title_built_from_labels(changes, title):
     assert chart_title(ChartSpec.model_validate({**CHART, **changes}), LABELS) == title
+
+
+@pytest.mark.parametrize("label, shown", [
+    ("SKU", "SKU"), ("ID", "ID"), ("SKU sản phẩm", "SKU sản phẩm"), ("Q1 doanh thu", "Q1 doanh thu"), ("Mã SKU", "mã SKU"),
+    ("Ý kiến", "ý kiến"), ("nhóm", "nhóm"),
+])
+def test_label_after_theo_keeps_codes_and_abbreviations(label, shown):
+    assert chart_title(ChartSpec.model_validate(CHART), {"total": "Tổng", "group": label}) == f"Tổng theo {shown}"
+
+
+def test_label_after_va_keeps_abbreviation():
+    spec = ChartSpec.model_validate({**CHART, "type": "stacked_bar", "series": "brand", "y": ["n"]})
+    assert chart_title(spec, {"n": "số lượng", "group": "Nhóm", "brand": "SKU"}) == "Số lượng theo nhóm và SKU"
 
 
 def test_duplicate_x_is_rejected_not_summed(led):
@@ -224,7 +237,7 @@ def test_image_title_comes_from_labels_not_ai(led, monkeypatch):
     real = Axes.set_title
     monkeypatch.setattr(Axes, "set_title", lambda self, text, **kw: shown.append(text) or real(self, text, **kw))
     png_of(led, CHART, labels={"group": "Nhóm hàng", "total": "BIMAT tổng"}, mask=lambda s: s.replace("BIMAT", "[che]"))
-    assert shown == ["[che] tổng theo Nhóm hàng"]
+    assert shown == ["[che] tổng theo nhóm hàng"]
 
 
 def test_draw_charts_saves_by_insight_id_and_skips_no_chart(led):
@@ -440,6 +453,29 @@ def test_bar_and_word_table_same_order(led, bar_order):
 
 def test_table_of_other_file_does_not_order_bar(led, bar_order):
     assert bars_of(led, ONE_DIM, bar_order, table={"file": "by_group.csv", "columns": ["group", "note"]}) == ["B", "C", "A"]
+
+
+STACK = {"type": "stacked_bar", "series": "brand", "y": ["n"]}
+
+
+def test_stacked_groups_sorted_by_total(led, bar_order):
+    frame = pd.DataFrame({"g": ["A", "A", "B", "B", "C"], "n": [1, 2, 5, 1, 4], "brand": ["X", "Y", "X", "Y", "X"]})
+    assert bars_of(led, frame, bar_order, **STACK) == ["B", "C", "A"]
+
+
+def test_stacked_without_series_sums_columns(led, bar_order):
+    frame = pd.DataFrame({"g": ["A", "B"], "n": [1, 2], "m": [4, 9]})
+    assert bars_of(led, frame, bar_order, type="stacked_bar", y=["n", "m"]) == ["B", "A"]
+
+
+def test_stacked_on_time_axis_keeps_file_order(led, bar_order):
+    frame = pd.DataFrame({"month": ["T1", "T1", "T2", "T2"], "n": [1, 1, 5, 5], "brand": ["X", "Y", "X", "Y"]})
+    assert bars_of(led, frame, bar_order, **STACK) == ["T1", "T2"]
+
+
+def test_stacked_equal_totals_keep_first_appearance(led, bar_order):
+    frame = pd.DataFrame({"g": ["B", "A", "C"], "n": [2, 2, 3], "brand": ["X", "X", "X"]})
+    assert bars_of(led, frame, bar_order, **STACK) == ["C", "B", "A"]
 
 
 def test_cut_bar_keeps_order_of_table(led, bar_order):

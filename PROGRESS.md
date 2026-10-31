@@ -341,6 +341,9 @@ Sau lần chạy thật `bai0a` (số liệu đúng, đã xem Word):
 - Bar dùng chung `tables.ordered` với bảng Word (dùng đặc tả bảng của cùng insight nếu cùng file), bảng và hình cùng thứ tự; cột
   thời gian giữ thứ tự file. Cắt top nhóm của bar giữ thứ tự đó.
 - Word: `limitations` bắt đầu bằng "Không có hạn chế đáng kể" thì in đúng `config.REPORT_NO_LIMITATIONS`; `insights.json` không đổi.
+- Tiêu đề biểu đồ: nhãn sau "theo", "và" viết thường chữ đầu, trừ khi từ đầu có chữ hoa hoặc chữ số sau ký tự đầu (SKU, ID, Q1).
+  Tên riêng thường (Việt Nam) không nhận ra được nên vẫn bị viết thường.
+- Stacked_bar: nhóm xếp theo tổng các dải giảm dần (`tables.grouped`, hàm bảng có `sort` dùng), trục thời gian giữ thứ tự file.
 
 ## Quyết định đã chốt
 - Prompt analysis trong `skills/analysis/` là nguồn duy nhất cho cả bộ kiểm định lẫn agent: kiểm định đo đúng

@@ -16,7 +16,7 @@ from pandas.api.types import is_bool_dtype, is_numeric_dtype
 import config
 from ledger import ResultStatus
 from report.placeholders import format_value
-from report.tables import is_measure, label_column, load_table, ordered, result_tables
+from report.tables import grouped, is_measure, is_time_column, label_column, load_table, ordered, result_tables
 from skills.report.schemas import ChartSpec
 
 CHART_TYPES = ("bar", "line", "stacked_bar")
@@ -201,12 +201,20 @@ def with_auto_charts(record, ledger, mask=str):
 
 # ---------- ve ----------
 
+def _mid_sentence(label):
+    """Nhan dung giua cau: viet thuong chu dau, tru khi tu dau la ma, viet tat (SKU, ID, Q1)."""
+    word = label.split(" ")[0]
+    if any(c.isupper() or c.isdigit() for c in word[1:]):
+        return label
+    return label[:1].lower() + label[1:]
+
+
 def chart_title(spec, labels=None):
     """Tieu de trong anh va chu thich Hinh n: sinh tu column_labels, khong dung title cua AI."""
     labels = labels or {}
-    text = f"{', '.join(labels.get(c, c) for c in spec.y)} theo {labels.get(spec.x, spec.x)}"
+    text = f"{', '.join(labels.get(c, c) for c in spec.y)} theo {_mid_sentence(labels.get(spec.x, spec.x))}"
     if spec.series:
-        text += f" và {labels.get(spec.series, spec.series)}"
+        text += f" và {_mid_sentence(labels.get(spec.series, spec.series))}"
     return text[0].upper() + text[1:]
 
 
@@ -272,12 +280,15 @@ def _draw_lines(ax, frame):
 
 def draw_chart(spec, path, out_path, labels=None, mask=str, table=None):
     """Ve mot bieu do ra PNG out_path. Bar xep nhom bang chinh ham xep cua bang Word: table la dac ta bang cung insight (cung
-    file) de bang va hinh cung thu tu; khong co thi theo quy tac mac dinh."""
+    file) de bang va hinh cung thu tu; khong co thi theo quy tac mac dinh. Stacked_bar xep nhom theo tong cac dai, giam dan.
+    Truc thoi gian giu thu tu file."""
     labels = labels or {}
     y_label = labels.get(spec.y[0], spec.y[0]) if len(spec.y) == 1 else ""
     df = load_table(path)
     if spec.type == "bar":
         df = ordered(df, table or {"columns": [spec.x, *spec.y]})
+    elif spec.type == "stacked_bar" and not is_time_column(spec.x, df[spec.x]):
+        df = grouped(df.assign(_total=df[spec.y].sum(axis=1)), spec.x, "_total")
     frame, note = _limit(_frame(df, spec, labels, mask), spec, y_label or "tổng")
     if frame.empty:
         raise ChartError(f"{spec.file} không có dòng nào để vẽ.")

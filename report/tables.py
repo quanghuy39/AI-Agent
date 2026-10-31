@@ -38,7 +38,7 @@ def label_column(columns):
     return names[0] if len(columns) == 2 and len(names) == 1 else None
 
 
-def _grouped(df, group, by, descending):
+def grouped(df, group, by, descending=True):
     """Cac dong cung nhom lien nhau: nhom xep theo tong cot by, trong nhom xep theo by. Trung tong giu thu tu xuat hien."""
     groups = [rows for _, rows in df.groupby(group, sort=False, dropna=False)]
     groups.sort(key=lambda rows: rows[by].sum(), reverse=descending)
@@ -54,7 +54,7 @@ def ordered(df, spec):
     one_dimension = len(labels) < 2 or label_column(labels) is not None
     sort = spec.get("sort")
     if sort and not one_dimension:
-        return _grouped(df, labels[0], sort["by"], sort.get("desc", True))
+        return grouped(df, labels[0], sort["by"], sort.get("desc", True))
     if sort:
         return df.sort_values(sort["by"], ascending=not sort.get("desc", True), kind="stable")
     if len(measures) == 1 and one_dimension and not any(is_time_column(c, df[c]) for c in columns):
